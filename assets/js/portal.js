@@ -55,6 +55,56 @@ function showPortalMessage(text, type='info') {
 }
 function setText(sel,val){const el=document.querySelector(sel);if(el)el.textContent=val;}
 
+function invoiceProduct(invoice){return invoice?.licenseSnapshot?.productName || 'Sonstige Leistung';}
+function invoiceSport(invoice){return invoice?.licenseSnapshot?.sport || 'Ohne Sportart';}
+function numeric(value){const n=Number(value);return Number.isFinite(n)?n:0;}
+function accountingYears(){
+  const years=new Set([String(new Date().getFullYear())]);
+  adminData.invoices.forEach(i=>{if(/^\d{4}-/.test(String(i.invoiceDate||'')))years.add(String(i.invoiceDate).slice(0,4));if(/^\d{4}-/.test(String(i.paymentDate||'')))years.add(String(i.paymentDate).slice(0,4));});
+  return [...years].sort((a,b)=>Number(b)-Number(a));
+}
+function currentAccountingYear(){return document.querySelector('#accountingYear')?.value || String(new Date().getFullYear());}
+function isCancelledInvoice(invoice){return ['cancelled','storniert','storno'].includes(String(invoice.paymentStatus||invoice.status||'').toLowerCase());}
+function csvCell(value){const text=String(value??'').replace(/\r?\n/g,' ').trim();return `"${text.replace(/"/g,'""')}"`;}
+function deNumber(value){return numeric(value).toFixed(2).replace('.',',');}
+function downloadCsv(filename,rows){
+  const csv='\ufeff'+rows.map(row=>row.map(csvCell).join(';')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function renderBreakdown(targetSelector,items){
+  const target=document.querySelector(targetSelector);if(!target)return;
+  const entries=Object.entries(items).sort((a,b)=>b[1]-a[1]);
+  const total=entries.reduce((sum,[,v])=>sum+v,0);
+  target.innerHTML=entries.length?entries.map(([label,value])=>`<div class="accounting-breakdown-row"><div><strong>${escapeHtml(label)}</strong><small>${total>0?new Intl.NumberFormat('de-DE',{style:'percent',maximumFractionDigits:1}).format(value/total):'0 %'}</small></div><span>${money(value)}</span></div>`).join(''):'<div class="empty-state">Keine Zahlungseingänge in diesem Jahr.</div>';
+}
+function renderAccounting(){
+  const select=document.querySelector('#accountingYear');if(!select)return;
+  const years=accountingYears();const previous=select.value;select.innerHTML=years.map(y=>`<option value="${y}">${y}</option>`).join('');select.value=years.includes(previous)?previous:years[0];
+  const year=select.value;
+  const yearInvoices=adminData.invoices.filter(i=>String(i.invoiceDate||'').slice(0,4)===year&&!isCancelledInvoice(i));
+  const paidInYear=adminData.invoices.filter(i=>String(i.paymentStatus||'').toLowerCase()==='paid'&&String(i.paymentDate||'').slice(0,4)===year&&!isCancelledInvoice(i));
+  const openYear=yearInvoices.filter(i=>String(i.paymentStatus||'open').toLowerCase()!=='paid');
+  const invoiced=yearInvoices.reduce((s,i)=>s+numeric(i.totalAmount),0);const received=paidInYear.reduce((s,i)=>s+numeric(i.totalAmount),0);const open=openYear.reduce((s,i)=>s+numeric(i.totalAmount),0);
+  setText('[data-accounting-invoiced]',money(invoiced));setText('[data-accounting-received]',money(received));setText('[data-accounting-open]',money(open));setText('[data-accounting-paid-count]',String(paidInYear.length));
+  const incomeTarget=document.querySelector('#accountingIncomeList');
+  const income=[...paidInYear].sort((a,b)=>String(b.paymentDate||'').localeCompare(String(a.paymentDate||''))||String(b.invoiceNumber||'').localeCompare(String(a.invoiceNumber||'')));
+  if(incomeTarget) incomeTarget.innerHTML=income.length?`<table class="portal-table"><thead><tr><th>Zahlung</th><th>Rechnung</th><th>Kunde</th><th>Produkt</th><th>Betrag</th></tr></thead><tbody>${income.map(i=>`<tr><td>${dateText(i.paymentDate)}</td><td><a class="table-action" href="rechnung.html?id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">${escapeHtml(i.invoiceNumber||i.id)}</a></td><td>${escapeHtml(i.customerSnapshot?.name||customerName(i.customerId))}</td><td>${escapeHtml(invoiceProduct(i))}<span class="admin-subline">${escapeHtml(invoiceSport(i))}</span></td><td><strong>${money(i.totalAmount)}</strong></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Zahlungseingänge.</strong><span>Als bezahlt markierte Rechnungen erscheinen hier anhand des Zahlungsdatums.</span></div>';
+  const productTotals={};const sportTotals={};income.forEach(i=>{productTotals[invoiceProduct(i)]=(productTotals[invoiceProduct(i)]||0)+numeric(i.totalAmount);sportTotals[invoiceSport(i)]=(sportTotals[invoiceSport(i)]||0)+numeric(i.totalAmount);});
+  renderBreakdown('#accountingProductBreakdown',productTotals);renderBreakdown('#accountingSportBreakdown',sportTotals);
+  const openTarget=document.querySelector('#accountingOpenList');
+  if(openTarget) openTarget.innerHTML=openYear.length?`<table class="portal-table"><thead><tr><th>Rechnung</th><th>Kunde</th><th>Fällig</th><th>Betrag</th></tr></thead><tbody>${[...openYear].sort((a,b)=>String(a.dueDate||a.invoiceDate||'').localeCompare(String(b.dueDate||b.invoiceDate||''))).map(i=>`<tr><td><a class="table-action" href="rechnung.html?id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">${escapeHtml(i.invoiceNumber||i.id)}</a></td><td>${escapeHtml(i.customerSnapshot?.name||customerName(i.customerId))}</td><td>${dateText(i.dueDate)}</td><td><strong>${money(i.totalAmount)}</strong></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Keine offenen Rechnungen.</strong><span>Für dieses Rechnungsjahr sind alle erfassten Rechnungen bezahlt.</span></div>';
+}
+function exportIncomeCsv(){
+  const year=currentAccountingYear();const rows=[['Zahlungseingang','Rechnungsnummer','Rechnungsdatum','Kunde','Produkt','Sportart','Zahlungsart','Nettobetrag','USt','Bruttobetrag','Status']];
+  adminData.invoices.filter(i=>String(i.paymentStatus||'').toLowerCase()==='paid'&&String(i.paymentDate||'').slice(0,4)===year&&!isCancelledInvoice(i)).sort((a,b)=>String(a.paymentDate||'').localeCompare(String(b.paymentDate||''))).forEach(i=>rows.push([i.paymentDate||'',i.invoiceNumber||'',i.invoiceDate||'',i.customerSnapshot?.name||customerName(i.customerId),invoiceProduct(i),invoiceSport(i),paymentMethodLabel(i.paymentMethod),deNumber(i.amountNet),deNumber(i.vatAmount),deNumber(i.totalAmount),'Bezahlt']));
+  downloadCsv(`HOGAsports_Zahlungseingaenge_${year}.csv`,rows);
+}
+function exportInvoicesCsv(){
+  const year=currentAccountingYear();const rows=[['Rechnungsnummer','Rechnungsdatum','Fällig am','Kunde','Produkt','Sportart','Zahlungsart','Nettobetrag','USt','Bruttobetrag','Zahlungsstatus','Zahlungseingang']];
+  adminData.invoices.filter(i=>String(i.invoiceDate||'').slice(0,4)===year).sort((a,b)=>String(a.invoiceDate||'').localeCompare(String(b.invoiceDate||''))).forEach(i=>rows.push([i.invoiceNumber||'',i.invoiceDate||'',i.dueDate||'',i.customerSnapshot?.name||customerName(i.customerId),invoiceProduct(i),invoiceSport(i),paymentMethodLabel(i.paymentMethod),deNumber(i.amountNet),deNumber(i.vatAmount),deNumber(i.totalAmount),paymentStatusLabel(i.paymentStatus),i.paymentDate||'']));
+  downloadCsv(`HOGAsports_Rechnungen_${year}.csv`,rows);
+}
+
 logoutButtons.forEach(btn => btn.addEventListener('click', async () => { await signOut(auth); window.location.replace('login.html'); }));
 
 function activateTab(tabName){
@@ -183,7 +233,7 @@ async function loadAdminPortal(){
   adminData.invoices=invoicesSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.invoiceSettings=settingsSnap.exists()?settingsSnap.data():null;
   setText('[data-admin-customers]',adminData.customers.length);setText('[data-admin-licenses]',adminData.licenses.length);setText('[data-admin-users]',adminData.users.length);setText('[data-admin-invoices]',adminData.invoices.length);
-  renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();
+  renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();renderAccounting();
 }
 
 function initAdminForms(){
@@ -236,6 +286,10 @@ function initAdminForms(){
     try{await setDoc(doc(db,'settings','invoice'),data,{merge:true});adminData.invoiceSettings=data;showPortalMessage('Rechnungs-Grunddaten wurden gespeichert.');}catch(err){console.error(err);showPortalMessage('Rechnungsdaten konnten nicht gespeichert werden.','error');}
   });
   document.querySelector('[data-toggle-form="invoiceForm"]')?.addEventListener('click',()=>{const f=document.querySelector('#invoiceForm');if(!f||f.hidden)return;const today=new Date().toISOString().slice(0,10);if(!f.elements.invoiceDate.value)f.elements.invoiceDate.value=today;const days=adminData.invoiceSettings?.paymentTermsDays??14;if(!f.elements.dueDate.value)f.elements.dueDate.value=datePlusDays(today,days);updateInvoiceSelectors();});
+  const accountingYear=document.querySelector('#accountingYear');
+  accountingYear?.addEventListener('change',renderAccounting);
+  document.querySelector('#exportIncomeCsv')?.addEventListener('click',exportIncomeCsv);
+  document.querySelector('#exportInvoicesCsv')?.addEventListener('click',exportInvoicesCsv);
   syncUserCustomerRequirement();
 }
 
