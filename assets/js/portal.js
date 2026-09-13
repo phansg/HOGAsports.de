@@ -1,6 +1,6 @@
 import { app, auth, db } from './firebase-config.js';
 import { onAuthStateChanged, signOut, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { doc, getDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 
 const pageRole = document.body.dataset.portalRole;
@@ -13,7 +13,8 @@ const logoutButtons = document.querySelectorAll('[data-logout]');
 const functions = getFunctions(app, 'europe-west1');
 const createHogaUser = httpsCallable(functions, 'createHogaUser');
 const updateHogaUser = httpsCallable(functions, 'updateHogaUser');
-let adminData = { customers: [], licenses: [], users: [], invoices: [] };
+const createHogaInvoice = httpsCallable(functions, 'createHogaInvoice');
+let adminData = { customers: [], licenses: [], users: [], invoices: [], invoiceSettings: null };
 let currentUserUid = null;
 
 function roleAllowed(role) {
@@ -90,7 +91,7 @@ async function loadCustomerPortal(user, profile, role) {
 
   const invoiceList=document.querySelector('#invoiceList');
   invoices.sort((a,b)=>String(b.invoiceDate||'').localeCompare(String(a.invoiceDate||'')));
-  if (invoiceList) invoiceList.innerHTML = invoices.length ? `<table class="portal-table"><thead><tr><th>Rechnung</th><th>Datum</th><th>Betrag</th><th>Status</th><th></th></tr></thead><tbody>${invoices.map(i=>`<tr><td>${escapeHtml(i.invoiceNumber||i.id)}</td><td>${dateText(i.invoiceDate)}</td><td>${money(i.totalAmount??i.amount)}</td><td><span class="status ${statusClass(i.paymentStatus||i.status)}">${escapeHtml(i.paymentStatusLabel||i.paymentStatus||i.status||'Offen')}</span></td><td>${i.pdfUrl?`<a class="text-link" href="${escapeHtml(i.pdfUrl)}" target="_blank" rel="noopener">PDF öffnen</a>`:'<span class="muted-text">PDF folgt</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state"><strong>Noch keine Rechnung vorhanden.</strong><span>Rechnungen werden nach einer Buchung hier bereitgestellt.</span></div>';
+  if (invoiceList) invoiceList.innerHTML = invoices.length ? `<table class="portal-table"><thead><tr><th>Rechnung</th><th>Datum</th><th>Betrag</th><th>Status</th><th></th></tr></thead><tbody>${invoices.map(i=>`<tr><td>${escapeHtml(i.invoiceNumber||i.id)}</td><td>${dateText(i.invoiceDate)}</td><td>${money(i.totalAmount??i.amount)}</td><td><span class="status ${statusClass(i.paymentStatus||i.status)}">${escapeHtml(i.paymentStatusLabel||i.paymentStatus||i.status||'Offen')}</span></td><td><a class="text-link" href="rechnung.html?id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">Rechnung öffnen</a></td></tr>`).join('')}</tbody></table>` : '<div class="empty-state"><strong>Noch keine Rechnung vorhanden.</strong><span>Rechnungen werden nach einer Buchung hier bereitgestellt.</span></div>';
 }
 
 function customerName(customerId){ return adminData.customers.find(c=>c.id===customerId)?.name || 'Unbekannter Kunde'; }
@@ -143,16 +144,46 @@ async function sendResetForUser(id){
   try{await sendPasswordResetEmail(auth,u.email);showPortalMessage(`Passwort-E-Mail wurde an ${u.email} versendet.`);}catch(err){console.error(err);showPortalMessage('Die Passwort-E-Mail konnte nicht versendet werden. Bitte Authentication-Einstellungen prüfen.','error');}
 }
 
+
+function paymentStatusLabel(status='open'){return ({open:'Offen',paid:'Bezahlt',cancelled:'Storniert'}[String(status)]||status||'Offen');}
+function paymentMethodLabel(method='bank'){return ({bank:'Überweisung',paypal:'PayPal',other:'Sonstiges'}[String(method)]||method||'–');}
+function renderAdminInvoices(){
+  const target=document.querySelector('#adminInvoiceList'); if(!target)return;
+  const rows=[...adminData.invoices].sort((a,b)=>String(b.invoiceDate||'').localeCompare(String(a.invoiceDate||'')));
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Rechnung</th><th>Kunde</th><th>Datum</th><th>Betrag</th><th>Zahlung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(i=>`<tr><td><strong>${escapeHtml(i.invoiceNumber||i.id)}</strong><span class="admin-subline">${escapeHtml(i.description||'')}</span></td><td>${escapeHtml(customerName(i.customerId))}</td><td>${dateText(i.invoiceDate)}</td><td>${money(i.totalAmount)}</td><td>${escapeHtml(paymentMethodLabel(i.paymentMethod))}</td><td><span class="status ${statusClass(i.paymentStatus)}">${escapeHtml(paymentStatusLabel(i.paymentStatus))}</span>${i.paymentDate?`<span class="admin-subline">${dateText(i.paymentDate)}</span>`:''}</td><td class="table-actions"><a class="table-action" href="rechnung.html?id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">Öffnen</a>${i.paymentStatus!=='paid'?`<button class="table-action secondary" type="button" data-mark-paid="${i.id}">Bezahlt</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Rechnung vorhanden.</strong><span>Erstelle die erste Rechnung direkt aus HOGAsports.</span></div>';
+  target.querySelectorAll('[data-mark-paid]').forEach(btn=>btn.addEventListener('click',()=>markInvoicePaid(btn.dataset.markPaid)));
+}
+function updateInvoiceSelectors(){
+  const customer=document.querySelector('#invoiceCustomer'); if(customer) customer.innerHTML=customerOptions();
+  updateInvoiceLicenseSelect();
+}
+function updateInvoiceLicenseSelect(){
+  const form=document.querySelector('#invoiceForm'); if(!form)return;
+  const customerId=String(form.elements.customerId?.value||'');
+  const licenses=adminData.licenses.filter(l=>!customerId||l.customerId===customerId);
+  form.elements.licenseId.innerHTML='<option value="">Ohne Lizenzbezug</option>'+licenses.map(l=>`<option value="${l.id}">${escapeHtml((l.productName||'Lizenz')+' · '+(l.sport||'')+' · '+(l.licenseNumber||'ohne Nr.'))}</option>`).join('');
+}
+function datePlusDays(dateStr,days){const d=new Date(dateStr+'T12:00:00');d.setDate(d.getDate()+Number(days||0));return d.toISOString().slice(0,10);}
+function fillInvoiceSettingsForm(){
+  const f=document.querySelector('#invoiceSettingsForm'); if(!f)return;
+  const s=adminData.invoiceSettings||{};
+  ['businessName','ownerName','street','postalCode','city','phone','email','website','taxMode','vatRate','taxNumber','vatId','taxNote','accountHolder','bankName','iban','bic','paypalEmail','paymentTermsDays','invoicePrefix','invoiceStartNumber','invoiceFooter'].forEach(k=>{if(f.elements[k]&&s[k]!==undefined&&s[k]!==null)f.elements[k].value=s[k];});
+}
+async function markInvoicePaid(id){
+  try{await updateDoc(doc(db,'invoices',id),{paymentStatus:'paid',paymentDate:new Date().toISOString().slice(0,10),updatedAt:serverTimestamp(),updatedBy:currentUserUid});await loadAdminPortal();showPortalMessage('Zahlungseingang wurde erfasst.');}catch(err){console.error(err);showPortalMessage('Zahlungsstatus konnte nicht aktualisiert werden.','error');}
+}
+
 async function loadAdminPortal(){
-  const [customersSnap, licensesSnap, usersSnap, invoicesSnap]=await Promise.all([
-    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices'))
+  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, settingsSnap]=await Promise.all([
+    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDoc(doc(db,'settings','invoice'))
   ]);
   adminData.customers=customersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.licenses=licensesSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.users=usersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.invoices=invoicesSnap.docs.map(d=>({id:d.id,...d.data()}));
+  adminData.invoiceSettings=settingsSnap.exists()?settingsSnap.data():null;
   setText('[data-admin-customers]',adminData.customers.length);setText('[data-admin-licenses]',adminData.licenses.length);setText('[data-admin-users]',adminData.users.length);setText('[data-admin-invoices]',adminData.invoices.length);
-  renderAdminCustomers();renderAdminLicenses();renderAdminUsers();updateLicenseCustomerSelect();
+  renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();
 }
 
 function initAdminForms(){
@@ -190,6 +221,21 @@ function initAdminForms(){
     }catch(err){console.error(err);const msg=err?.message||'';showPortalMessage(msg.includes('already-exists')?'Für diese E-Mail-Adresse existiert bereits ein Zugang.':msg.includes('permission-denied')?'Keine Berechtigung für diese Aktion.':msg.includes('not-found')?'Der ausgewählte Datensatz wurde nicht gefunden.':'Benutzer konnte nicht gespeichert werden. Bitte prüfen, ob die Firebase Function bereitgestellt wurde.','error');}
     finally{if(submit){submit.disabled=false;submit.textContent=oldText||'Benutzer speichern';}}
   });
+
+  const invoiceForm=document.querySelector('#invoiceForm');
+  invoiceForm?.elements.customerId.addEventListener('change',()=>{updateInvoiceLicenseSelect();const c=adminData.customers.find(x=>x.id===invoiceForm.elements.customerId.value);const l=adminData.licenses.find(x=>x.id===invoiceForm.elements.licenseId.value);if(!invoiceForm.elements.description.value&&l)invoiceForm.elements.description.value=`${l.productName||'HOGAsports Lizenz'} – ${l.sport||''}`;});
+  invoiceForm?.elements.licenseId.addEventListener('change',()=>{const l=adminData.licenses.find(x=>x.id===invoiceForm.elements.licenseId.value);if(l)invoiceForm.elements.description.value=`${l.productName||'HOGAsports Lizenz'} – ${l.sport||''}`;});
+  invoiceForm?.addEventListener('submit',async e=>{
+    e.preventDefault(); const fd=new FormData(invoiceForm); const payload={customerId:String(fd.get('customerId')||''),licenseId:String(fd.get('licenseId')||''),invoiceDate:String(fd.get('invoiceDate')||''),dueDate:String(fd.get('dueDate')||''),description:String(fd.get('description')||'').trim(),amountNet:Number(fd.get('amountNet')),paymentMethod:String(fd.get('paymentMethod')||'bank'),note:String(fd.get('note')||'').trim()};
+    const submit=invoiceForm.querySelector('[type="submit"]');const old=submit?.textContent;if(submit){submit.disabled=true;submit.textContent='Rechnung wird erstellt …';}
+    try{const res=await createHogaInvoice(payload);resetForm('invoiceForm');await loadAdminPortal();showPortalMessage(`Rechnung ${res.data.invoiceNumber} wurde erstellt.`);window.open(`rechnung.html?id=${encodeURIComponent(res.data.invoiceId)}`,'_blank','noopener');}catch(err){console.error(err);const m=String(err?.message||'');showPortalMessage(m.includes('Grunddaten')?'Bitte zuerst die Rechnungs-Grunddaten vollständig speichern.':'Rechnung konnte nicht erstellt werden. Bitte Function und Rechnungsdaten prüfen.','error');}finally{if(submit){submit.disabled=false;submit.textContent=old||'Rechnung erstellen';}}
+  });
+  const settingsForm=document.querySelector('#invoiceSettingsForm');
+  settingsForm?.addEventListener('submit',async e=>{
+    e.preventDefault();const fd=new FormData(settingsForm);const data={};['businessName','ownerName','street','postalCode','city','phone','email','website','taxMode','taxNumber','vatId','taxNote','accountHolder','bankName','iban','bic','paypalEmail','invoicePrefix','invoiceFooter'].forEach(k=>data[k]=String(fd.get(k)||'').trim());data.vatRate=Number(fd.get('vatRate')||19);data.paymentTermsDays=Number(fd.get('paymentTermsDays')||14);data.invoiceStartNumber=Math.max(1,Number(fd.get('invoiceStartNumber')||1));data.updatedAt=serverTimestamp();data.updatedBy=currentUserUid;
+    try{await setDoc(doc(db,'settings','invoice'),data,{merge:true});adminData.invoiceSettings=data;showPortalMessage('Rechnungs-Grunddaten wurden gespeichert.');}catch(err){console.error(err);showPortalMessage('Rechnungsdaten konnten nicht gespeichert werden.','error');}
+  });
+  document.querySelector('[data-toggle-form="invoiceForm"]')?.addEventListener('click',()=>{const f=document.querySelector('#invoiceForm');if(!f||f.hidden)return;const today=new Date().toISOString().slice(0,10);if(!f.elements.invoiceDate.value)f.elements.invoiceDate.value=today;const days=adminData.invoiceSettings?.paymentTermsDays??14;if(!f.elements.dueDate.value)f.elements.dueDate.value=datePlusDays(today,days);updateInvoiceSelectors();});
   syncUserCustomerRequirement();
 }
 
