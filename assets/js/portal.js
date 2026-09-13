@@ -1,6 +1,7 @@
-import { auth, db } from './firebase-config.js';
-import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { app, auth, db } from './firebase-config.js';
+import { onAuthStateChanged, signOut, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { doc, getDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 
 const pageRole = document.body.dataset.portalRole;
 const loading = document.querySelector('#portalLoading');
@@ -9,7 +10,11 @@ const nameEls = document.querySelectorAll('[data-user-name]');
 const emailEls = document.querySelectorAll('[data-user-email]');
 const roleEls = document.querySelectorAll('[data-user-role]');
 const logoutButtons = document.querySelectorAll('[data-logout]');
+const functions = getFunctions(app, 'europe-west1');
+const createHogaUser = httpsCallable(functions, 'createHogaUser');
+const updateHogaUser = httpsCallable(functions, 'updateHogaUser');
 let adminData = { customers: [], licenses: [], users: [], invoices: [] };
+let currentUserUid = null;
 
 function roleAllowed(role) {
   if (pageRole === 'admin') return role === 'admin';
@@ -104,17 +109,39 @@ function renderAdminLicenses(){
 function renderAdminUsers(){
   const target=document.querySelector('#adminUserList'); if(!target) return;
   const rows=[...adminData.users].sort((a,b)=>String(a.displayName||a.email||'').localeCompare(String(b.displayName||b.email||''),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th></tr></thead><tbody>${rows.map(u=>`<tr><td>${escapeHtml(u.displayName||u.name||'–')}</td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>`<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid?'<span class="admin-subline">Aktuell angemeldet</span>':''}</td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${u.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${u.id}">Passwort-Mail</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
+  target.querySelectorAll('[data-edit-user]').forEach(btn=>btn.addEventListener('click',()=>fillUserForm(btn.dataset.editUser)));
+  target.querySelectorAll('[data-reset-user]').forEach(btn=>btn.addEventListener('click',()=>sendResetForUser(btn.dataset.resetUser)));
+}
+function customerOptions(){
+  return '<option value="">Bitte auswählen</option>'+[...adminData.customers].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'de')).map(c=>`<option value="${c.id}">${escapeHtml(c.name||c.id)}</option>`).join('');
 }
 function updateLicenseCustomerSelect(){
-  const select=document.querySelector('#licenseCustomer'); if(!select) return;
-  select.innerHTML='<option value="">Bitte auswählen</option>'+[...adminData.customers].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'de')).map(c=>`<option value="${c.id}">${escapeHtml(c.name||c.id)}</option>`).join('');
+  const select=document.querySelector('#licenseCustomer'); if(select) select.innerHTML=customerOptions();
+  const userSelect=document.querySelector('#userCustomer'); if(userSelect) userSelect.innerHTML=customerOptions();
 }
 function isoDateInput(value){ if(!value) return ''; const d=typeof value.toDate==='function'?value.toDate():new Date(value); return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10); }
 function openForm(id){const f=document.getElementById(id);if(f){f.hidden=false;f.scrollIntoView({behavior:'smooth',block:'nearest'});}}
-function resetForm(id){const f=document.getElementById(id);if(f){f.reset();const hidden=f.querySelector('[name="docId"]');if(hidden)hidden.value='';f.hidden=true;}}
+function resetForm(id){const f=document.getElementById(id);if(f){f.reset();f.querySelectorAll('input[type="hidden"]').forEach(hidden=>hidden.value='');f.hidden=true;}}
 function fillCustomerForm(id){const c=adminData.customers.find(x=>x.id===id);const f=document.querySelector('#customerForm');if(!c||!f)return;f.elements.docId.value=id;['name','contactName','email','phone','street','postalCode','city','customerType'].forEach(k=>{if(f.elements[k])f.elements[k].value=c[k]??'';});f.elements.active.value=String(c.active!==false);openForm('customerForm');}
 function fillLicenseForm(id){const l=adminData.licenses.find(x=>x.id===id);const f=document.querySelector('#licenseForm');if(!l||!f)return;f.elements.docId.value=id;['customerId','productName','sport','licenseNumber','status'].forEach(k=>{if(f.elements[k])f.elements[k].value=l[k]??'';});f.elements.startDate.value=isoDateInput(l.startDate);f.elements.endDate.value=isoDateInput(l.endDate);openForm('licenseForm');}
+function syncUserCustomerRequirement(){
+  const f=document.querySelector('#userForm'); if(!f) return;
+  const isAdmin=f.elements.role.value==='admin';
+  f.elements.customerId.disabled=isAdmin;
+  f.elements.customerId.required=!isAdmin;
+  if(isAdmin) f.elements.customerId.value='';
+}
+function fillUserForm(id){
+  const u=adminData.users.find(x=>x.id===id); const f=document.querySelector('#userForm'); if(!u||!f)return;
+  f.elements.uid.value=id; f.elements.displayName.value=u.displayName||u.name||''; f.elements.email.value=u.email||''; f.elements.role.value=u.role||'customer'; f.elements.customerId.value=u.customerId||''; f.elements.active.value=String(u.active!==false); f.elements.sendInvite.value='false';
+  syncUserCustomerRequirement(); openForm('userForm');
+}
+async function sendResetForUser(id){
+  const u=adminData.users.find(x=>x.id===id); if(!u?.email){showPortalMessage('Für diesen Zugang ist keine E-Mail-Adresse hinterlegt.','error');return;}
+  if(u.active===false){showPortalMessage('Der Zugang ist gesperrt. Bitte zuerst aktivieren.','error');return;}
+  try{await sendPasswordResetEmail(auth,u.email);showPortalMessage(`Passwort-E-Mail wurde an ${u.email} versendet.`);}catch(err){console.error(err);showPortalMessage('Die Passwort-E-Mail konnte nicht versendet werden. Bitte Authentication-Einstellungen prüfen.','error');}
+}
 
 async function loadAdminPortal(){
   const [customersSnap, licensesSnap, usersSnap, invoicesSnap]=await Promise.all([
@@ -129,7 +156,7 @@ async function loadAdminPortal(){
 }
 
 function initAdminForms(){
-  document.querySelectorAll('[data-toggle-form]').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.dataset.toggleForm;const f=document.getElementById(id);if(f.hidden){f.reset();const h=f.querySelector('[name="docId"]');if(h)h.value='';openForm(id);}else resetForm(id);}));
+  document.querySelectorAll('[data-toggle-form]').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.dataset.toggleForm;const f=document.getElementById(id);if(f.hidden){f.reset();f.querySelectorAll('input[type="hidden"]').forEach(h=>h.value='');if(id==='userForm')syncUserCustomerRequirement();openForm(id);}else resetForm(id);}));
   document.querySelectorAll('[data-cancel-form]').forEach(btn=>btn.addEventListener('click',()=>resetForm(btn.dataset.cancelForm)));
 
   const customerForm=document.querySelector('#customerForm');
@@ -145,6 +172,25 @@ function initAdminForms(){
     const data={customerId:String(fd.get('customerId')||''),productName:String(fd.get('productName')||''),sport:String(fd.get('sport')||''),licenseNumber:String(fd.get('licenseNumber')||'').trim(),startDate:String(fd.get('startDate')||''),endDate:String(fd.get('endDate')||''),status:String(fd.get('status')||'planned'),updatedAt:serverTimestamp()};
     try{if(id){await updateDoc(doc(db,'licenses',String(id)),data);}else{data.createdAt=serverTimestamp();await addDoc(collection(db,'licenses'),data);}resetForm('licenseForm');await loadAdminPortal();showPortalMessage(id?'Lizenz wurde aktualisiert.':'Lizenz wurde angelegt.');}catch(err){console.error(err);showPortalMessage('Lizenz konnte nicht gespeichert werden. Bitte Firestore-Regeln prüfen.','error');}
   });
+
+  const userForm=document.querySelector('#userForm');
+  userForm?.elements.role.addEventListener('change',syncUserCustomerRequirement);
+  userForm?.addEventListener('submit',async e=>{
+    e.preventDefault(); const fd=new FormData(userForm); const uid=String(fd.get('uid')||'');
+    const payload={uid,displayName:String(fd.get('displayName')||'').trim(),email:String(fd.get('email')||'').trim(),role:String(fd.get('role')||''),customerId:String(fd.get('customerId')||''),active:String(fd.get('active'))==='true'};
+    const wantsInvite=String(fd.get('sendInvite'))==='true';
+    if(payload.role!=='admin'&&!payload.customerId){showPortalMessage('Bitte einen Kunden/Verein auswählen.','error');return;}
+    if(wantsInvite&&!payload.active){showPortalMessage('Eine Passwort-E-Mail kann nur für einen aktiven Zugang versendet werden.','error');return;}
+    const submit=userForm.querySelector('[type="submit"]'); const oldText=submit?.textContent; if(submit){submit.disabled=true;submit.textContent='Bitte warten …';}
+    try{
+      if(uid) await updateHogaUser(payload); else await createHogaUser(payload);
+      if(wantsInvite) await sendPasswordResetEmail(auth,payload.email);
+      resetForm('userForm'); await loadAdminPortal();
+      showPortalMessage(uid?(wantsInvite?'Benutzer wurde aktualisiert und die Passwort-E-Mail versendet.':'Benutzer wurde aktualisiert.'):(wantsInvite?'Benutzer wurde angelegt und die Passwort-E-Mail versendet.':'Benutzer wurde angelegt.'));
+    }catch(err){console.error(err);const msg=err?.message||'';showPortalMessage(msg.includes('already-exists')?'Für diese E-Mail-Adresse existiert bereits ein Zugang.':msg.includes('permission-denied')?'Keine Berechtigung für diese Aktion.':msg.includes('not-found')?'Der ausgewählte Datensatz wurde nicht gefunden.':'Benutzer konnte nicht gespeichert werden. Bitte prüfen, ob die Firebase Function bereitgestellt wurde.','error');}
+    finally{if(submit){submit.disabled=false;submit.textContent=oldText||'Benutzer speichern';}}
+  });
+  syncUserCustomerRequirement();
 }
 
 onAuthStateChanged(auth, async (user) => {
@@ -156,7 +202,7 @@ onAuthStateChanged(auth, async (user) => {
     const displayName=data.displayName||data.name||user.email?.split('@')[0]||'Benutzer';
     nameEls.forEach(el=>el.textContent=displayName); emailEls.forEach(el=>el.textContent=user.email||data.email||''); roleEls.forEach(el=>el.textContent=roleLabel(role));
     if(pageRole==='customer') await loadCustomerPortal(user,data,role);
-    if(pageRole==='admin'){initAdminForms();await loadAdminPortal();}
+    if(pageRole==='admin'){currentUserUid=user.uid;initAdminForms();await loadAdminPortal();}
     if(loading) loading.hidden=true; if(content) content.hidden=false;
   } catch(error){ console.error(error); await signOut(auth); window.location.replace('login.html'); }
 });
