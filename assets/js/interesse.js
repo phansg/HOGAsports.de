@@ -5,6 +5,7 @@ const functions = getFunctions(app, 'europe-west1');
 const submitHogaInterest = httpsCallable(functions, 'submitHogaInterest');
 const form = document.querySelector('#interestForm');
 const messageBox = document.querySelector('#interestFormMessage');
+const RECAPTCHA_SITE_KEY = '6LdfibstAAAAAPDgqdnThbFlBke2A5mGzy02OKE-';
 
 function showMessage(text, type = 'info') {
   if (!messageBox) return;
@@ -21,6 +22,16 @@ form?.addEventListener('submit', async (event) => {
   const fd = new FormData(form);
   const submit = form.querySelector('[type="submit"]');
   const originalText = submit?.textContent || 'Interesse unverbindlich senden';
+  let recaptchaToken = '';
+  try {
+    await new Promise((resolve) => grecaptcha.ready(resolve));
+    recaptchaToken = await grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'interest_submit' });
+  } catch (error) {
+    console.error('reCAPTCHA konnte nicht gestartet werden', error);
+    showMessage('Die Sicherheitsprüfung konnte nicht gestartet werden. Bitte laden Sie die Seite neu und versuchen Sie es erneut.', 'error');
+    return;
+  }
+
   const payload = {
     organization: String(fd.get('verein') || '').trim(),
     contactName: String(fd.get('ansprechpartner') || '').trim(),
@@ -31,6 +42,7 @@ form?.addEventListener('submit', async (event) => {
     message: String(fd.get('nachricht') || '').trim(),
     website: String(fd.get('website') || '').trim(),
     privacyAccepted: fd.get('datenschutz') === '1',
+    recaptchaToken,
   };
 
   if (submit) { submit.disabled = true; submit.textContent = 'Anfrage wird gesendet …'; }
@@ -45,7 +57,9 @@ form?.addEventListener('submit', async (event) => {
     console.error(error);
     const code = String(error?.code || '');
     const text = String(error?.message || '');
-    if (code.includes('resource-exhausted')) {
+    if (code.includes('permission-denied') || code.includes('failed-precondition')) {
+      showMessage('Die Sicherheitsprüfung war nicht erfolgreich. Bitte laden Sie die Seite neu und versuchen Sie es erneut.', 'error');
+    } else if (code.includes('resource-exhausted')) {
       showMessage('Diese Anfrage wurde gerade bereits übermittelt. Bitte prüfen Sie auch Ihren E-Mail-Posteingang.', 'error');
     } else if (code.includes('invalid-argument')) {
       showMessage(text.replace(/^FirebaseError:\s*/,'') || 'Bitte prüfen Sie Ihre Eingaben.', 'error');
