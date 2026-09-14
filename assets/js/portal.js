@@ -1,6 +1,6 @@
 import { app, auth, db } from './firebase-config.js';
 import { onAuthStateChanged, signOut, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp, writeBatch } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 
 const pageRole = document.body.dataset.portalRole;
@@ -225,18 +225,87 @@ async function markInvoicePaid(id){
 }
 
 
+function interestStatusLabel(status='new'){
+  return ({new:'Neu',contacted:'Kontaktiert',waiting:'Rückmeldung offen',ordered:'Bestellung eingegangen',converted:'Als Kunde übernommen',closed:'Erledigt / kein Kauf'})[String(status)]||status||'Neu';
+}
+function interestStatusClass(status='new'){
+  const s=String(status);
+  if(['ordered','converted'].includes(s)) return 'status-available';
+  if(s==='closed') return 'status-dev';
+  return 'status-date';
+}
+async function updateInterestStatus(id,status){
+  const noteField=document.querySelector(`[data-interest-note="${CSS.escape(id)}"]`);
+  const internalNote=String(noteField?.value||'').trim();
+  try{
+    await updateDoc(doc(db,'interests',id),{status,internalNote,updatedAt:serverTimestamp(),updatedBy:currentUserUid});
+    const item=adminData.interests.find(x=>x.id===id);if(item){item.status=status;item.internalNote=internalNote;}
+    renderAdminInterests();
+    setText('[data-admin-interests]',adminData.interests.filter(i=>!['converted','closed'].includes(String(i.status||'new'))).length);
+    showPortalMessage(`Interessentenstatus wurde auf „${interestStatusLabel(status)}“ gesetzt.`);
+  }catch(err){console.error(err);showPortalMessage('Status konnte nicht gespeichert werden.','error');}
+}
+async function saveInterestNote(id){
+  const field=document.querySelector(`[data-interest-note="${CSS.escape(id)}"]`);if(!field)return;
+  try{
+    await updateDoc(doc(db,'interests',id),{internalNote:String(field.value||'').trim(),noteUpdatedAt:serverTimestamp(),updatedAt:serverTimestamp(),updatedBy:currentUserUid});
+    const item=adminData.interests.find(x=>x.id===id);if(item)item.internalNote=String(field.value||'').trim();
+    showPortalMessage('Interne Notiz wurde gespeichert.');
+  }catch(err){console.error(err);showPortalMessage('Notiz konnte nicht gespeichert werden.','error');}
+}
+async function convertInterestToCustomer(id){
+  const interest=adminData.interests.find(x=>x.id===id);if(!interest)return;
+  if(String(interest.status||'new')!=='ordered'){showPortalMessage('Eine Übernahme ist erst möglich, wenn der Status „Bestellung eingegangen“ gesetzt wurde.','error');return;}
+  const duplicate=adminData.customers.find(c=>String(c.email||'').toLowerCase()===String(interest.email||'').toLowerCase() || String(c.name||'').trim().toLowerCase()===String(interest.organization||'').trim().toLowerCase());
+  if(duplicate){showPortalMessage(`Es existiert bereits ein Kunde „${duplicate.name||duplicate.email}“. Bitte zuerst prüfen, damit kein doppelter Datensatz entsteht.`,'error');return;}
+  if(!window.confirm(`„${interest.organization||interest.contactName}“ jetzt als Kunden übernehmen?\n\nBitte nur bestätigen, wenn die Bestellung tatsächlich vorliegt.`))return;
+  const customerRef=doc(collection(db,'customers'));
+  const interestRef=doc(db,'interests',id);
+  const batch=writeBatch(db);
+  batch.set(customerRef,{name:String(interest.organization||'').trim(),contactName:String(interest.contactName||'').trim(),email:String(interest.email||'').trim(),phone:String(interest.phone||'').trim(),street:'',postalCode:'',city:'',customerType:'club',active:true,sourceInterestId:id,sourceProduct:String(interest.product||''),sourceSport:String(interest.sport||''),createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+  batch.update(interestRef,{status:'converted',customerId:customerRef.id,convertedAt:serverTimestamp(),updatedAt:serverTimestamp(),updatedBy:currentUserUid});
+  try{
+    await batch.commit();
+    await loadAdminPortal();
+    activateTab('customers');
+    fillCustomerForm(customerRef.id);
+    showPortalMessage('Interessent wurde als Kunde übernommen. Bitte ergänze bzw. prüfe jetzt Kundentyp und Adressdaten.');
+  }catch(err){console.error(err);showPortalMessage('Interessent konnte nicht als Kunde übernommen werden.','error');}
+}
 function renderAdminInterests(){
   const el=document.querySelector('#interestList');if(!el)return;
-  const items=[...adminData.interests].sort((a,b)=>{
-    const ta=a.createdAt?.toMillis?.()||0,tb=b.createdAt?.toMillis?.()||0;return tb-ta;
-  });
-  if(!items.length){el.innerHTML='<div class="empty-state">Noch keine Interessenvormerkungen vorhanden.</div>';return;}
-  el.innerHTML=`<table class="portal-table"><thead><tr><th>Eingang</th><th>Verein / Kontakt</th><th>Interesse</th><th>Kontakt</th><th>Nachricht</th><th>Status</th></tr></thead><tbody>${items.map(i=>{
+  const filter=document.querySelector('#interestStatusFilter')?.value||'open';
+  let items=[...adminData.interests].sort((a,b)=>{const ta=a.createdAt?.toMillis?.()||0,tb=b.createdAt?.toMillis?.()||0;return tb-ta;});
+  if(filter==='open') items=items.filter(i=>!['converted','closed'].includes(String(i.status||'new')));
+  else if(filter!=='all') items=items.filter(i=>String(i.status||'new')===filter);
+  if(!items.length){el.innerHTML='<div class="empty-state"><strong>Keine passenden Interessenten.</strong><span>Für den gewählten Filter sind aktuell keine Einträge vorhanden.</span></div>';return;}
+  el.innerHTML=items.map(i=>{
     const created=i.createdAt?.toDate?.();
     const when=created&&!Number.isNaN(created.getTime())?new Intl.DateTimeFormat('de-DE',{dateStyle:'short',timeStyle:'short'}).format(created):'–';
-    const status=i.deliveryStatus==='sent'?'E-Mail versendet':i.deliveryStatus==='error'?'E-Mail-Fehler':'Wird verarbeitet';
-    return `<tr><td>${escapeHtml(when)}</td><td><strong>${escapeHtml(i.organization||'–')}</strong><small>${escapeHtml(i.contactName||'–')}</small></td><td><strong>${escapeHtml(i.product||'–')}</strong><small>${escapeHtml(i.sport||'–')}</small></td><td><a href="mailto:${escapeHtml(i.email||'')}">${escapeHtml(i.email||'–')}</a><small>${escapeHtml(i.phone||'')}</small></td><td>${escapeHtml(i.message||'–')}</td><td><span class="status ${i.deliveryStatus==='sent'?'status-available':'status-date'}">${escapeHtml(status)}</span></td></tr>`;
-  }).join('')}</tbody></table>`;
+    const current=String(i.status||'new');
+    const delivery=i.deliveryStatus==='sent'?'E-Mail bestätigt':i.deliveryStatus==='error'?'E-Mail-Fehler':'E-Mail ausstehend';
+    const linkedCustomer=i.customerId?adminData.customers.find(c=>c.id===i.customerId):null;
+    const statusOptions=[['new','Neu'],['contacted','Kontaktiert'],['waiting','Rückmeldung offen'],['ordered','Bestellung eingegangen'],['closed','Erledigt / kein Kauf']].map(([v,l])=>`<option value="${v}" ${current===v?'selected':''}>${l}</option>`).join('');
+    return `<article class="admin-form" data-interest-card="${i.id}">
+      <div class="panel-head"><div><h3>${escapeHtml(i.organization||'Interessent')}</h3><p>${escapeHtml(i.contactName||'–')} · Eingang ${escapeHtml(when)}</p></div><span class="status ${interestStatusClass(current)}">${escapeHtml(interestStatusLabel(current))}</span></div>
+      <div class="form-grid">
+        <div class="field"><label>Produkt / Sportart</label><div><strong>${escapeHtml(i.product||'–')}</strong><small class="admin-subline">${escapeHtml(i.sport||'–')}</small></div></div>
+        <div class="field"><label>Kontakt</label><div><a class="table-action" href="mailto:${escapeHtml(i.email||'')}?subject=${encodeURIComponent('HOGAsports – Ihre Anfrage')}">${escapeHtml(i.email||'–')}</a><small class="admin-subline">${escapeHtml(i.phone||'')}</small></div></div>
+        <div class="field full"><label>Nachricht des Interessenten</label><div>${escapeHtml(i.message||'Keine zusätzliche Nachricht.')}</div></div>
+        <div class="field"><label>Bearbeitungsstatus</label>${current==='converted'?`<div><span class="status status-available">Als Kunde übernommen</span>${linkedCustomer?`<small class="admin-subline">Kunde: ${escapeHtml(linkedCustomer.name||linkedCustomer.email||linkedCustomer.id)}</small>`:''}</div>`:`<select data-interest-status="${i.id}">${statusOptions}</select>`}</div>
+        <div class="field"><label>Versandstatus</label><div><span class="status ${i.deliveryStatus==='sent'?'status-available':'status-date'}">${escapeHtml(delivery)}</span></div></div>
+        <div class="field full"><label>Interne Notiz</label><textarea rows="3" data-interest-note="${i.id}" placeholder="z. B. telefoniert am … / Angebot gesendet / Rückruf gewünscht">${escapeHtml(i.internalNote||'')}</textarea></div>
+      </div>
+      <div class="admin-form-actions">
+        <a class="btn btn-secondary btn-small" href="mailto:${escapeHtml(i.email||'')}?subject=${encodeURIComponent('HOGAsports – Ihre Anfrage')}">E-Mail schreiben</a>
+        <button class="btn btn-secondary btn-small" type="button" data-save-interest-note="${i.id}">Notiz speichern</button>
+        ${current==='ordered'?`<button class="btn btn-primary btn-small" type="button" data-convert-interest="${i.id}">Als Kunde übernehmen</button>`:''}
+      </div>
+    </article>`;
+  }).join('');
+  el.querySelectorAll('[data-interest-status]').forEach(select=>select.addEventListener('change',()=>updateInterestStatus(select.dataset.interestStatus,select.value)));
+  el.querySelectorAll('[data-save-interest-note]').forEach(btn=>btn.addEventListener('click',()=>saveInterestNote(btn.dataset.saveInterestNote)));
+  el.querySelectorAll('[data-convert-interest]').forEach(btn=>btn.addEventListener('click',()=>convertInterestToCustomer(btn.dataset.convertInterest)));
 }
 
 async function loadAdminPortal(){
@@ -249,7 +318,7 @@ async function loadAdminPortal(){
   adminData.invoices=invoicesSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.interests=interestsSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.invoiceSettings=settingsSnap.exists()?settingsSnap.data():null;
-  setText('[data-admin-customers]',adminData.customers.length);setText('[data-admin-licenses]',adminData.licenses.length);setText('[data-admin-users]',adminData.users.length);setText('[data-admin-invoices]',adminData.invoices.length);setText('[data-admin-interests]',adminData.interests.length);
+  setText('[data-admin-customers]',adminData.customers.length);setText('[data-admin-licenses]',adminData.licenses.length);setText('[data-admin-users]',adminData.users.length);setText('[data-admin-invoices]',adminData.invoices.length);setText('[data-admin-interests]',adminData.interests.filter(i=>!['converted','closed'].includes(String(i.status||'new'))).length);
   renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();renderAdminInterests();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();renderAccounting();
 }
 
@@ -319,6 +388,8 @@ function initAdminForms(){
     }finally{if(submit){submit.disabled=false;submit.textContent=old||'Test-E-Mail senden';}}
   });
 
+  const interestStatusFilter=document.querySelector('#interestStatusFilter');
+  interestStatusFilter?.addEventListener('change',renderAdminInterests);
   const accountingYear=document.querySelector('#accountingYear');
   accountingYear?.addEventListener('change',renderAccounting);
   document.querySelector('#exportIncomeCsv')?.addEventListener('click',exportIncomeCsv);
