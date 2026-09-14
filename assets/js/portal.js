@@ -15,7 +15,7 @@ const createHogaUser = httpsCallable(functions, 'createHogaUser');
 const updateHogaUser = httpsCallable(functions, 'updateHogaUser');
 const createHogaInvoice = httpsCallable(functions, 'createHogaInvoice');
 const testHogaEmail = httpsCallable(functions, 'testHogaEmail');
-let adminData = { customers: [], licenses: [], users: [], invoices: [], invoiceSettings: null };
+let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], invoiceSettings: null };
 let currentUserUid = null;
 
 function roleAllowed(role) {
@@ -224,17 +224,33 @@ async function markInvoicePaid(id){
   try{await updateDoc(doc(db,'invoices',id),{paymentStatus:'paid',paymentDate:new Date().toISOString().slice(0,10),updatedAt:serverTimestamp(),updatedBy:currentUserUid});await loadAdminPortal();showPortalMessage('Zahlungseingang wurde erfasst.');}catch(err){console.error(err);showPortalMessage('Zahlungsstatus konnte nicht aktualisiert werden.','error');}
 }
 
+
+function renderAdminInterests(){
+  const el=document.querySelector('#interestList');if(!el)return;
+  const items=[...adminData.interests].sort((a,b)=>{
+    const ta=a.createdAt?.toMillis?.()||0,tb=b.createdAt?.toMillis?.()||0;return tb-ta;
+  });
+  if(!items.length){el.innerHTML='<div class="empty-state">Noch keine Interessenvormerkungen vorhanden.</div>';return;}
+  el.innerHTML=`<table class="portal-table"><thead><tr><th>Eingang</th><th>Verein / Kontakt</th><th>Interesse</th><th>Kontakt</th><th>Nachricht</th><th>Status</th></tr></thead><tbody>${items.map(i=>{
+    const created=i.createdAt?.toDate?.();
+    const when=created&&!Number.isNaN(created.getTime())?new Intl.DateTimeFormat('de-DE',{dateStyle:'short',timeStyle:'short'}).format(created):'–';
+    const status=i.deliveryStatus==='sent'?'E-Mail versendet':i.deliveryStatus==='error'?'E-Mail-Fehler':'Wird verarbeitet';
+    return `<tr><td>${escapeHtml(when)}</td><td><strong>${escapeHtml(i.organization||'–')}</strong><small>${escapeHtml(i.contactName||'–')}</small></td><td><strong>${escapeHtml(i.product||'–')}</strong><small>${escapeHtml(i.sport||'–')}</small></td><td><a href="mailto:${escapeHtml(i.email||'')}">${escapeHtml(i.email||'–')}</a><small>${escapeHtml(i.phone||'')}</small></td><td>${escapeHtml(i.message||'–')}</td><td><span class="status ${i.deliveryStatus==='sent'?'status-available':'status-date'}">${escapeHtml(status)}</span></td></tr>`;
+  }).join('')}</tbody></table>`;
+}
+
 async function loadAdminPortal(){
-  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, settingsSnap]=await Promise.all([
-    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDoc(doc(db,'settings','invoice'))
+  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, interestsSnap, settingsSnap]=await Promise.all([
+    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDoc(doc(db,'settings','invoice'))
   ]);
   adminData.customers=customersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.licenses=licensesSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.users=usersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.invoices=invoicesSnap.docs.map(d=>({id:d.id,...d.data()}));
+  adminData.interests=interestsSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.invoiceSettings=settingsSnap.exists()?settingsSnap.data():null;
-  setText('[data-admin-customers]',adminData.customers.length);setText('[data-admin-licenses]',adminData.licenses.length);setText('[data-admin-users]',adminData.users.length);setText('[data-admin-invoices]',adminData.invoices.length);
-  renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();renderAccounting();
+  setText('[data-admin-customers]',adminData.customers.length);setText('[data-admin-licenses]',adminData.licenses.length);setText('[data-admin-users]',adminData.users.length);setText('[data-admin-invoices]',adminData.invoices.length);setText('[data-admin-interests]',adminData.interests.length);
+  renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();renderAdminInterests();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();renderAccounting();
 }
 
 function initAdminForms(){
