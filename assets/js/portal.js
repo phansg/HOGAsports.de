@@ -14,6 +14,7 @@ const functions = getFunctions(app, 'europe-west1');
 const createHogaUser = httpsCallable(functions, 'createHogaUser');
 const updateHogaUser = httpsCallable(functions, 'updateHogaUser');
 const createHogaInvoice = httpsCallable(functions, 'createHogaInvoice');
+const testHogaEmail = httpsCallable(functions, 'testHogaEmail');
 let adminData = { customers: [], licenses: [], users: [], invoices: [], invoiceSettings: null };
 let currentUserUid = null;
 
@@ -286,6 +287,22 @@ function initAdminForms(){
     try{await setDoc(doc(db,'settings','invoice'),data,{merge:true});adminData.invoiceSettings=data;showPortalMessage('Rechnungs-Grunddaten wurden gespeichert.');}catch(err){console.error(err);showPortalMessage('Rechnungsdaten konnten nicht gespeichert werden.','error');}
   });
   document.querySelector('[data-toggle-form="invoiceForm"]')?.addEventListener('click',()=>{const f=document.querySelector('#invoiceForm');if(!f||f.hidden)return;const today=new Date().toISOString().slice(0,10);if(!f.elements.invoiceDate.value)f.elements.invoiceDate.value=today;const days=adminData.invoiceSettings?.paymentTermsDays??14;if(!f.elements.dueDate.value)f.elements.dueDate.value=datePlusDays(today,days);updateInvoiceSelectors();});
+  const emailTestForm=document.querySelector('#emailTestForm');
+  emailTestForm?.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const recipient=String(new FormData(emailTestForm).get('recipient')||'').trim();
+    const submit=emailTestForm.querySelector('[type="submit"]');const old=submit?.textContent;
+    if(submit){submit.disabled=true;submit.textContent='Test-E-Mail wird gesendet …';}
+    try{
+      await testHogaEmail({recipient});
+      showPortalMessage(`Test-E-Mail wurde an ${recipient} gesendet.`);
+    }catch(err){
+      console.error(err);
+      const msg=String(err?.message||'');
+      showPortalMessage(msg.includes('permission-denied')?'Keine Berechtigung für den E-Mail-Test.':msg.includes('invalid-argument')?'Bitte eine gültige Empfänger-E-Mail-Adresse eingeben.':'Test-E-Mail konnte nicht gesendet werden. Bitte Firebase Secret und STRATO-Zugang prüfen.','error');
+    }finally{if(submit){submit.disabled=false;submit.textContent=old||'Test-E-Mail senden';}}
+  });
+
   const accountingYear=document.querySelector('#accountingYear');
   accountingYear?.addEventListener('change',renderAccounting);
   document.querySelector('#exportIncomeCsv')?.addEventListener('click',exportIncomeCsv);
