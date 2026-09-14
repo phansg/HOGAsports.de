@@ -1,5 +1,5 @@
 import { app, auth, db } from './firebase-config.js';
-import { onAuthStateChanged, signOut, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp, writeBatch } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 
@@ -15,7 +15,9 @@ const createHogaUser = httpsCallable(functions, 'createHogaUser');
 const updateHogaUser = httpsCallable(functions, 'updateHogaUser');
 const createHogaInvoice = httpsCallable(functions, 'createHogaInvoice');
 const testHogaEmail = httpsCallable(functions, 'testHogaEmail');
-let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], invoiceSettings: null };
+const sendHogaAccessMail = httpsCallable(functions, 'sendHogaAccessMail');
+const sendHogaOrderConfirmation = httpsCallable(functions, 'sendHogaOrderConfirmation');
+let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null };
 let currentUserUid = null;
 
 function roleAllowed(role) {
@@ -149,8 +151,9 @@ function customerName(customerId){ return adminData.customers.find(c=>c.id===cus
 function renderAdminCustomers(){
   const target=document.querySelector('#customerList'); if(!target) return;
   const rows=[...adminData.customers].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Ansprechpartner</th><th>Kontakt</th><th>Typ</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(c=>`<tr><td><span class="admin-customer-name">${escapeHtml(c.name||'–')}</span><span class="admin-subline">${escapeHtml([c.postalCode,c.city].filter(Boolean).join(' ')||'')}</span></td><td>${escapeHtml(c.contactName||'–')}</td><td>${escapeHtml(c.email||'–')}<span class="admin-subline">${escapeHtml(c.phone||'')}</span></td><td>${escapeHtml({club:'Sportverein',organizer:'Turnierveranstalter',facility:'Sportanlage',other:'Sonstiges'}[c.customerType]||c.customerType||'–')}</td><td><span class="status ${c.active===false?'status-dev':'status-available'}">${c.active===false?'Inaktiv':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-customer="${c.id}">Bearbeiten</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch kein Kunde vorhanden.</strong><span>Lege den ersten Verein direkt hier an.</span></div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Ansprechpartner</th><th>Kontakt</th><th>Typ</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(c=>`<tr><td><span class="admin-customer-name">${escapeHtml(c.name||'–')}</span><span class="admin-subline">${escapeHtml([c.postalCode,c.city].filter(Boolean).join(' ')||'')}</span></td><td>${escapeHtml(c.contactName||'–')}</td><td>${escapeHtml(c.email||'–')}<span class="admin-subline">${escapeHtml(c.phone||'')}</span></td><td>${escapeHtml({club:'Sportverein',organizer:'Turnierveranstalter',facility:'Sportanlage',other:'Sonstiges'}[c.customerType]||c.customerType||'–')}</td><td><span class="status ${c.active===false?'status-dev':'status-available'}">${c.active===false?'Inaktiv':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-customer="${c.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-order-customer="${c.id}">Auftrag</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch kein Kunde vorhanden.</strong><span>Lege den ersten Verein direkt hier an.</span></div>';
   target.querySelectorAll('[data-edit-customer]').forEach(btn=>btn.addEventListener('click',()=>fillCustomerForm(btn.dataset.editCustomer)));
+  target.querySelectorAll('[data-order-customer]').forEach(btn=>btn.addEventListener('click',()=>openOrderForCustomer(btn.dataset.orderCustomer)));
 }
 function renderAdminLicenses(){
   const target=document.querySelector('#adminLicenseList'); if(!target) return;
@@ -161,7 +164,7 @@ function renderAdminLicenses(){
 function renderAdminUsers(){
   const target=document.querySelector('#adminUserList'); if(!target) return;
   const rows=[...adminData.users].sort((a,b)=>String(a.displayName||a.email||'').localeCompare(String(b.displayName||b.email||''),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>`<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid?'<span class="admin-subline">Aktuell angemeldet</span>':''}</td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${u.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${u.id}">Passwort-Mail</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>`<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid?'<span class="admin-subline">Aktuell angemeldet</span>':''}</td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${u.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${u.id}">Zugangslink</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
   target.querySelectorAll('[data-edit-user]').forEach(btn=>btn.addEventListener('click',()=>fillUserForm(btn.dataset.editUser)));
   target.querySelectorAll('[data-reset-user]').forEach(btn=>btn.addEventListener('click',()=>sendResetForUser(btn.dataset.resetUser)));
 }
@@ -192,7 +195,7 @@ function fillUserForm(id){
 async function sendResetForUser(id){
   const u=adminData.users.find(x=>x.id===id); if(!u?.email){showPortalMessage('Für diesen Zugang ist keine E-Mail-Adresse hinterlegt.','error');return;}
   if(u.active===false){showPortalMessage('Der Zugang ist gesperrt. Bitte zuerst aktivieren.','error');return;}
-  try{await sendPasswordResetEmail(auth,u.email);showPortalMessage(`Passwort-E-Mail wurde an ${u.email} versendet.`);}catch(err){console.error(err);showPortalMessage('Die Passwort-E-Mail konnte nicht versendet werden. Bitte Authentication-Einstellungen prüfen.','error');}
+  try{await sendHogaAccessMail({uid:id});showPortalMessage(`HOGAsports-Zugangslink wurde von service@hogasports.de an ${u.email} versendet.`);}catch(err){console.error(err);showPortalMessage('Der HOGAsports-Zugangslink konnte nicht versendet werden. Bitte Function und E-Mail-Versand prüfen.','error');}
 }
 
 
@@ -308,18 +311,33 @@ function renderAdminInterests(){
   el.querySelectorAll('[data-convert-interest]').forEach(btn=>btn.addEventListener('click',()=>convertInterestToCustomer(btn.dataset.convertInterest)));
 }
 
+function orderPaymentLabel(method='bank'){return String(method)==='paypal'?'PayPal':'Überweisung';}
+function renderOrders(){
+  const target=document.querySelector('#orderList');if(!target)return;
+  const rows=[...adminData.orders].sort((a,b)=>{const ta=a.confirmedAt?.toMillis?.()||a.createdAt?.toMillis?.()||0,tb=b.confirmedAt?.toMillis?.()||b.createdAt?.toMillis?.()||0;return tb-ta;});
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Auftrag</th><th>Kunde</th><th>Leistung</th><th>Preis</th><th>Zahlung</th><th>Bestätigt</th></tr></thead><tbody>${rows.map(o=>`<tr><td><strong>${escapeHtml(o.orderNumber||o.id)}</strong></td><td>${escapeHtml(customerName(o.customerId))}<span class="admin-subline">${escapeHtml(o.recipient||'')}</span></td><td>${escapeHtml(o.productDescription||'–')}</td><td>${money(o.amount||0)}</td><td>${escapeHtml(orderPaymentLabel(o.paymentMethod))}</td><td>${dateText(o.confirmedAt||o.createdAt)}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Auftragsbestätigung versendet.</strong><span>Bestellungen werden erst nach persönlicher Abstimmung hier dokumentiert.</span></div>';
+}
+function openOrderForCustomer(id){
+  const c=adminData.customers.find(x=>x.id===id);const f=document.querySelector('#orderConfirmationForm');if(!c||!f)return;
+  activateTab('orders');f.hidden=false;f.reset();f.elements.customerId.value=id;f.elements.customerName.value=c.name||'';f.elements.recipient.value=c.email||'';
+  const source=String(c.sourceProduct||'').trim();if(source)f.elements.productDescription.value=source;
+  f.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function closeOrderForm(){const f=document.querySelector('#orderConfirmationForm');if(f){f.reset();f.hidden=true;}}
+
 async function loadAdminPortal(){
-  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, interestsSnap, settingsSnap]=await Promise.all([
-    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDoc(doc(db,'settings','invoice'))
+  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, interestsSnap, ordersSnap, settingsSnap]=await Promise.all([
+    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDocs(collection(db,'orders')), getDoc(doc(db,'settings','invoice'))
   ]);
   adminData.customers=customersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.licenses=licensesSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.users=usersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.invoices=invoicesSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.interests=interestsSnap.docs.map(d=>({id:d.id,...d.data()}));
+  adminData.orders=ordersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.invoiceSettings=settingsSnap.exists()?settingsSnap.data():null;
   setText('[data-admin-customers]',adminData.customers.length);setText('[data-admin-licenses]',adminData.licenses.length);setText('[data-admin-users]',adminData.users.length);setText('[data-admin-invoices]',adminData.invoices.length);setText('[data-admin-interests]',adminData.interests.filter(i=>!['converted','closed'].includes(String(i.status||'new'))).length);
-  renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();renderAdminInterests();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();renderAccounting();
+  renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();renderAdminInterests();renderOrders();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();renderAccounting();
 }
 
 function initAdminForms(){
@@ -347,13 +365,13 @@ function initAdminForms(){
     const payload={uid,displayName:String(fd.get('displayName')||'').trim(),email:String(fd.get('email')||'').trim(),role:String(fd.get('role')||''),customerId:String(fd.get('customerId')||''),active:String(fd.get('active'))==='true'};
     const wantsInvite=String(fd.get('sendInvite'))==='true';
     if(payload.role!=='admin'&&!payload.customerId){showPortalMessage('Bitte einen Kunden/Verein auswählen.','error');return;}
-    if(wantsInvite&&!payload.active){showPortalMessage('Eine Passwort-E-Mail kann nur für einen aktiven Zugang versendet werden.','error');return;}
+    if(wantsInvite&&!payload.active){showPortalMessage('Eine HOGAsports-Zugangslink kann nur für einen aktiven Zugang versendet werden.','error');return;}
     const submit=userForm.querySelector('[type="submit"]'); const oldText=submit?.textContent; if(submit){submit.disabled=true;submit.textContent='Bitte warten …';}
     try{
-      if(uid) await updateHogaUser(payload); else await createHogaUser(payload);
-      if(wantsInvite) await sendPasswordResetEmail(auth,payload.email);
+      let targetUid=uid; if(uid){await updateHogaUser(payload);}else{const created=await createHogaUser(payload);targetUid=created.data.uid;}
+      if(wantsInvite&&targetUid) await sendHogaAccessMail({uid:targetUid});
       resetForm('userForm'); await loadAdminPortal();
-      showPortalMessage(uid?(wantsInvite?'Benutzer wurde aktualisiert und die Passwort-E-Mail versendet.':'Benutzer wurde aktualisiert.'):(wantsInvite?'Benutzer wurde angelegt und die Passwort-E-Mail versendet.':'Benutzer wurde angelegt.'));
+      showPortalMessage(uid?(wantsInvite?'Benutzer wurde aktualisiert und die HOGAsports-Zugangslink versendet.':'Benutzer wurde aktualisiert.'):(wantsInvite?'Benutzer wurde angelegt und die HOGAsports-Zugangslink versendet.':'Benutzer wurde angelegt.'));
     }catch(err){console.error(err);const msg=err?.message||'';showPortalMessage(msg.includes('already-exists')?'Für diese E-Mail-Adresse existiert bereits ein Zugang.':msg.includes('permission-denied')?'Keine Berechtigung für diese Aktion.':msg.includes('not-found')?'Der ausgewählte Datensatz wurde nicht gefunden.':'Benutzer konnte nicht gespeichert werden. Bitte prüfen, ob die Firebase Function bereitgestellt wurde.','error');}
     finally{if(submit){submit.disabled=false;submit.textContent=oldText||'Benutzer speichern';}}
   });
@@ -372,6 +390,14 @@ function initAdminForms(){
     try{await setDoc(doc(db,'settings','invoice'),data,{merge:true});adminData.invoiceSettings=data;showPortalMessage('Rechnungs-Grunddaten wurden gespeichert.');}catch(err){console.error(err);showPortalMessage('Rechnungsdaten konnten nicht gespeichert werden.','error');}
   });
   document.querySelector('[data-toggle-form="invoiceForm"]')?.addEventListener('click',()=>{const f=document.querySelector('#invoiceForm');if(!f||f.hidden)return;const today=new Date().toISOString().slice(0,10);if(!f.elements.invoiceDate.value)f.elements.invoiceDate.value=today;const days=adminData.invoiceSettings?.paymentTermsDays??14;if(!f.elements.dueDate.value)f.elements.dueDate.value=datePlusDays(today,days);updateInvoiceSelectors();});
+  const orderForm=document.querySelector('#orderConfirmationForm');
+  orderForm?.addEventListener('submit',async e=>{
+    e.preventDefault();const fd=new FormData(orderForm);const payload={customerId:String(fd.get('customerId')||''),productDescription:String(fd.get('productDescription')||'').trim(),amount:Number(fd.get('amount')),paymentMethod:String(fd.get('paymentMethod')||''),note:String(fd.get('note')||'').trim()};
+    const submit=orderForm.querySelector('[type="submit"]');const old=submit?.textContent;if(submit){submit.disabled=true;submit.textContent='Auftragsbestätigung wird gesendet …';}
+    try{const res=await sendHogaOrderConfirmation(payload);closeOrderForm();await loadAdminPortal();showPortalMessage(`Auftragsbestätigung ${res.data.orderNumber} wurde von service@hogasports.de an ${res.data.email} versendet.`);}catch(err){console.error(err);const m=String(err?.message||'');showPortalMessage(m.includes('IBAN')?'Bitte zuerst eine IBAN in den Rechnungsdaten hinterlegen.':m.includes('PayPal')?'Bitte zuerst die PayPal-E-Mail in den Rechnungsdaten hinterlegen.':m.includes('gültige E-Mail')?'Beim Kunden ist keine gültige E-Mail-Adresse hinterlegt.':'Auftragsbestätigung konnte nicht versendet werden.','error');}finally{if(submit){submit.disabled=false;submit.textContent=old||'Auftragsbestätigung per E-Mail senden';}}
+  });
+  document.querySelector('[data-cancel-order]')?.addEventListener('click',closeOrderForm);
+
   const emailTestForm=document.querySelector('#emailTestForm');
   emailTestForm?.addEventListener('submit',async e=>{
     e.preventDefault();
