@@ -376,13 +376,13 @@ function initAdminForms(){
     const payload={uid,displayName:String(fd.get('displayName')||'').trim(),email:String(fd.get('email')||'').trim(),role:String(fd.get('role')||''),customerId:String(fd.get('customerId')||''),active:String(fd.get('active'))==='true'};
     const wantsInvite=String(fd.get('sendInvite'))==='true';
     if(payload.role!=='admin'&&!payload.customerId){showPortalMessage('Bitte einen Kunden/Verein auswählen.','error');return;}
-    if(wantsInvite&&!payload.active){showPortalMessage('Eine HOGAsports-Zugangslink kann nur für einen aktiven Zugang versendet werden.','error');return;}
+    if(wantsInvite&&!payload.active){showPortalMessage('Ein HOGAsports-Zugangslink kann nur für einen aktiven Zugang versendet werden.','error');return;}
     const submit=userForm.querySelector('[type="submit"]'); const oldText=submit?.textContent; if(submit){submit.disabled=true;submit.textContent='Bitte warten …';}
     try{
       let targetUid=uid; if(uid){await updateHogaUser(payload);}else{const created=await createHogaUser(payload);targetUid=created.data.uid;}
       if(wantsInvite&&targetUid) await sendHogaAccessMail({uid:targetUid});
       resetForm('userForm'); await loadAdminPortal();
-      showPortalMessage(uid?(wantsInvite?'Benutzer wurde aktualisiert und die HOGAsports-Zugangslink versendet.':'Benutzer wurde aktualisiert.'):(wantsInvite?'Benutzer wurde angelegt und die HOGAsports-Zugangslink versendet.':'Benutzer wurde angelegt.'));
+      showPortalMessage(uid?(wantsInvite?'Benutzer wurde aktualisiert und der HOGAsports-Zugangslink wurde versendet.':'Benutzer wurde aktualisiert.'):(wantsInvite?'Benutzer wurde angelegt und der HOGAsports-Zugangslink wurde versendet.':'Benutzer wurde angelegt.'));
     }catch(err){console.error(err);const msg=err?.message||'';showPortalMessage(msg.includes('already-exists')?'Für diese E-Mail-Adresse existiert bereits ein Zugang.':msg.includes('permission-denied')?'Keine Berechtigung für diese Aktion.':msg.includes('not-found')?'Der ausgewählte Datensatz wurde nicht gefunden.':'Benutzer konnte nicht gespeichert werden. Bitte prüfen, ob die Firebase Function bereitgestellt wurde.','error');}
     finally{if(submit){submit.disabled=false;submit.textContent=oldText||'Benutzer speichern';}}
   });
