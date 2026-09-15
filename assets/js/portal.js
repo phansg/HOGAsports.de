@@ -142,6 +142,17 @@ async function loadCustomerPortal(user, profile, role) {
   if (memberList) memberList.innerHTML = members.length ? `<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th></tr></thead><tbody>${members.map(m=>`<tr><td>${escapeHtml(m.displayName||m.name||'–')}</td><td>${escapeHtml(m.email||'–')}</td><td>${escapeHtml(roleLabel(String(m.role||'customer').toLowerCase()))}</td><td><span class="status ${m.active===false?'status-dev':'status-available'}">${m.active===false?'Gesperrt':'Aktiv'}</span></td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">Keine Benutzer gefunden.</div>';
   const hint=document.querySelector('[data-user-admin-hint]'); if(hint) hint.textContent = role==='customer_admin' ? 'Verwaltung wird vorbereitet' : 'Nur Ansicht';
 
+  const webProductList=document.querySelector('#webProductList');
+  if (webProductList) {
+    const activeLicenses = licenses.filter(l => ['active','aktiv'].includes(String(l.status||'').toLowerCase()));
+    const managerLicense = activeLicenses.find(l => /vereinsmanager\s*web/i.test(String(l.productName||l.product||'')));
+    const tournamentLicense = activeLicenses.find(l => /tournament\s*web/i.test(String(l.productName||l.product||'')));
+    const cards = [];
+    if (managerLicense) cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet</span><h3>Vereinsmanager Web</h3><p>Zentrale Vereinsverwaltung für Mitglieder, Beiträge, Rechnungen und Finanzen. Weitere Web-Module folgen schrittweise.</p></div><a class="btn btn-primary" href="vereinsmanager-web.html">Vereinsmanager starten</a></article>`);
+    if (tournamentLicense) cards.push(`<article class="web-product-card"><div><span class="status status-date">In Vorbereitung</span><h3>Tournament Web</h3><p>Die Lizenz ist Ihrem Kundenkonto zugeordnet. Der direkte Web-Start wird mit der Tournament-Web-Anwendung freigeschaltet.</p></div><button class="btn btn-secondary" type="button" disabled>Noch nicht verfügbar</button></article>`);
+    webProductList.innerHTML = cards.length ? cards.join('') : '<div class="empty-state"><strong>Kein Web-Produkt freigeschaltet.</strong><span>Sobald eine aktive Web-Lizenz hinterlegt ist, erscheint hier der direkte Start.</span></div>';
+  }
+
   const invoiceList=document.querySelector('#invoiceList');
   invoices.sort((a,b)=>String(b.invoiceDate||'').localeCompare(String(a.invoiceDate||'')));
   if (invoiceList) invoiceList.innerHTML = invoices.length ? `<table class="portal-table"><thead><tr><th>Rechnung</th><th>Datum</th><th>Betrag</th><th>Status</th><th></th></tr></thead><tbody>${invoices.map(i=>`<tr><td>${escapeHtml(i.invoiceNumber||i.id)}</td><td>${dateText(i.invoiceDate)}</td><td>${money(i.totalAmount??i.amount)}</td><td><span class="status ${statusClass(i.paymentStatus||i.status)}">${escapeHtml(i.paymentStatusLabel||i.paymentStatus||i.status||'Offen')}</span></td><td><a class="text-link" href="rechnung.html?id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">Rechnung öffnen</a></td></tr>`).join('')}</tbody></table>` : '<div class="empty-state"><strong>Noch keine Rechnung vorhanden.</strong><span>Rechnungen werden nach einer Buchung hier bereitgestellt.</span></div>';
