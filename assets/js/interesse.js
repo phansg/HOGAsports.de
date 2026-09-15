@@ -42,6 +42,7 @@ form?.addEventListener('submit', async (event) => {
     message: String(fd.get('nachricht') || '').trim(),
     website: String(fd.get('website') || '').trim(),
     privacyAccepted: fd.get('datenschutz') === '1',
+    newsletterAccepted: fd.get('newsletter') === '1',
     recaptchaToken,
   };
 

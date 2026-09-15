@@ -13,6 +13,7 @@ const logoutButtons = document.querySelectorAll('[data-logout]');
 const functions = getFunctions(app, 'europe-west1');
 const createHogaUser = httpsCallable(functions, 'createHogaUser');
 const updateHogaUser = httpsCallable(functions, 'updateHogaUser');
+const deleteHogaUser = httpsCallable(functions, 'deleteHogaUser');
 const createHogaInvoice = httpsCallable(functions, 'createHogaInvoice');
 const testHogaEmail = httpsCallable(functions, 'testHogaEmail');
 const sendHogaAccessMail = httpsCallable(functions, 'sendHogaAccessMail');
@@ -115,7 +116,10 @@ function activateTab(tabName){
   document.querySelectorAll('[data-portal-panel]').forEach(panel=>{panel.hidden=panel.dataset.portalPanel!==tabName;});
 }
 document.querySelectorAll('[data-portal-tab]').forEach(button => button.addEventListener('click', () => activateTab(button.dataset.portalTab)));
-document.querySelectorAll('[data-jump-tab]').forEach(button => button.addEventListener('click', () => activateTab(button.dataset.jumpTab)));
+document.querySelectorAll('[data-jump-tab]').forEach(button => {
+  button.addEventListener('click', () => activateTab(button.dataset.jumpTab));
+  button.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(button.dataset.jumpTab); } });
+});
 
 async function loadCustomerPortal(user, profile, role) {
   const customerId = profile.customerId;
@@ -175,9 +179,10 @@ function renderAdminLicenses(){
 function renderAdminUsers(){
   const target=document.querySelector('#adminUserList'); if(!target) return;
   const rows=[...adminData.users].sort((a,b)=>String(a.displayName||a.email||'').localeCompare(String(b.displayName||b.email||''),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>`<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid?'<span class="admin-subline">Aktuell angemeldet</span>':''}</td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${u.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${u.id}">Zugangslink</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>`<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid?'<span class="admin-subline">Aktuell angemeldet</span>':''}</td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${u.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${u.id}">Zugangslink</button><button class="table-action danger" type="button" data-delete-user="${u.id}" ${u.id===currentUserUid?'disabled title="Eigener Zugang kann nicht gelöscht werden"':''}>Zugang löschen</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
   target.querySelectorAll('[data-edit-user]').forEach(btn=>btn.addEventListener('click',()=>fillUserForm(btn.dataset.editUser)));
   target.querySelectorAll('[data-reset-user]').forEach(btn=>btn.addEventListener('click',()=>sendResetForUser(btn.dataset.resetUser)));
+  target.querySelectorAll('[data-delete-user]').forEach(btn=>btn.addEventListener('click',()=>deleteUserAccess(btn.dataset.deleteUser)));
 }
 function customerOptions(){
   return '<option value="">Bitte auswählen</option>'+[...adminData.customers].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'de')).map(c=>`<option value="${c.id}">${escapeHtml(c.name||c.id)}</option>`).join('');
@@ -203,10 +208,22 @@ function fillUserForm(id){
   f.elements.uid.value=id; f.elements.displayName.value=u.displayName||u.name||''; f.elements.email.value=u.email||''; f.elements.role.value=u.role||'customer'; f.elements.customerId.value=u.customerId||''; f.elements.active.value=String(u.active!==false); f.elements.sendInvite.value='false';
   syncUserCustomerRequirement(); openForm('userForm');
 }
+async function deleteUserAccess(id){
+  const u=adminData.users.find(x=>x.id===id);
+  if(!u) return;
+  if(id===currentUserUid){showPortalMessage('Der aktuell angemeldete Administrator kann den eigenen Zugang nicht löschen.','error');return;}
+  const sameCustomer=u.customerId?adminData.users.filter(x=>x.id!==id&&x.customerId===u.customerId&&x.active!==false):[];
+  const lastHint=u.customerId&&sameCustomer.length===0?'\n\nACHTUNG: Dies ist der letzte aktive Zugang dieses Kunden. Der Kunde kann sich danach nicht mehr im Kundenportal anmelden.':'';
+  const ok=window.confirm(`Zugang wirklich vollständig löschen?\n\n${u.displayName||u.email||'Benutzer'} (${u.email||'ohne E-Mail'})\n\nDabei werden der Firebase-Login und das HOGAsports-Benutzerprofil gelöscht.${lastHint}\n\nDiese Aktion kann nicht rückgängig gemacht werden.`);
+  if(!ok)return;
+  try{await deleteHogaUser({uid:id});await loadAdminPortal();showPortalMessage('Der Zugang wurde vollständig gelöscht.');}
+  catch(err){console.error(err);const msg=String(err?.message||'');showPortalMessage(msg.includes('failed-precondition')?'Dieser Zugang kann nicht gelöscht werden.':msg.includes('permission-denied')?'Keine Berechtigung zum Löschen des Zugangs.':'Der Zugang konnte nicht vollständig gelöscht werden.','error');}
+}
+
 async function sendResetForUser(id){
   const u=adminData.users.find(x=>x.id===id); if(!u?.email){showPortalMessage('Für diesen Zugang ist keine E-Mail-Adresse hinterlegt.','error');return;}
   if(u.active===false){showPortalMessage('Der Zugang ist gesperrt. Bitte zuerst aktivieren.','error');return;}
-  try{await sendHogaAccessMail({uid:id});showPortalMessage(`HOGAsports-Zugangslink wurde von service@hogasports.de an ${u.email} versendet.`);}catch(err){console.error(err);showPortalMessage('Der HOGAsports-Zugangslink konnte nicht versendet werden. Bitte Function und E-Mail-Versand prüfen.','error');}
+  try{await sendHogaAccessMail({uid:id});showPortalMessage(`HOGAsports-Zugangslink wurde von service@hogasports.de an ${u.email} versendet.`);}catch(err){console.error(err);const msg=String(err?.message||'');showPortalMessage(msg.includes('not-found')?'Der Firebase-Zugang wurde nicht gefunden. Bitte den Benutzer prüfen oder neu anlegen.':msg.includes('failed-precondition')?'Der Zugang ist gesperrt oder besitzt keine gültige E-Mail-Adresse.':'Der HOGAsports-Zugangslink konnte nicht versendet werden. Bitte Function und E-Mail-Versand prüfen.','error');}
 }
 
 
@@ -382,8 +399,8 @@ function initAdminForms(){
       let targetUid=uid; if(uid){await updateHogaUser(payload);}else{const created=await createHogaUser(payload);targetUid=created.data.uid;}
       if(wantsInvite&&targetUid) await sendHogaAccessMail({uid:targetUid});
       resetForm('userForm'); await loadAdminPortal();
-      showPortalMessage(uid?(wantsInvite?'Benutzer wurde aktualisiert und der HOGAsports-Zugangslink wurde versendet.':'Benutzer wurde aktualisiert.'):(wantsInvite?'Benutzer wurde angelegt und der HOGAsports-Zugangslink wurde versendet.':'Benutzer wurde angelegt.'));
-    }catch(err){console.error(err);const msg=err?.message||'';showPortalMessage(msg.includes('already-exists')?'Für diese E-Mail-Adresse existiert bereits ein Zugang.':msg.includes('permission-denied')?'Keine Berechtigung für diese Aktion.':msg.includes('not-found')?'Der ausgewählte Datensatz wurde nicht gefunden.':'Benutzer konnte nicht gespeichert werden. Bitte prüfen, ob die Firebase Function bereitgestellt wurde.','error');}
+      showPortalMessage(uid?(wantsInvite?'Benutzer wurde aktualisiert und der HOGAsports-Zugangslink versendet.':'Benutzer wurde aktualisiert.'):(wantsInvite?'Benutzer wurde angelegt und der HOGAsports-Zugangslink versendet.':'Benutzer wurde angelegt.'));
+    }catch(err){console.error(err);const msg=err?.message||'';showPortalMessage(msg.includes('already-exists')?'Für diese E-Mail-Adresse besteht bereits ein HOGAsports-Zugang. Bitte verwenden Sie den vorhandenen Benutzer oder löschen Sie diesen zunächst vollständig.':msg.includes('permission-denied')?'Keine Berechtigung für diese Aktion.':msg.includes('not-found')?'Der ausgewählte Datensatz wurde nicht gefunden.':'Benutzer konnte nicht gespeichert werden. Bitte prüfen, ob die Firebase Function bereitgestellt wurde.','error');}
     finally{if(submit){submit.disabled=false;submit.textContent=oldText||'Benutzer speichern';}}
   });
 
