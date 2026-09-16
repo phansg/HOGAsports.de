@@ -23,7 +23,7 @@ let currentUserUid = null;
 
 function roleAllowed(role) {
   if (pageRole === 'admin') return role === 'admin';
-  if (pageRole === 'customer') return ['customer', 'customer_admin', 'tournament_manager'].includes(role);
+  if (pageRole === 'customer') return role === 'customer_admin';
   return false;
 }
 function roleLabel(role) {

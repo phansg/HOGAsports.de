@@ -1,39 +1,20 @@
-import { auth, db } from './firebase-config.js';
+import { app, auth, db } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { doc, getDoc, collection, getDocs, query, where } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
-
-const loading=document.querySelector('#vmwLoading');
-const app=document.querySelector('#vmwApp');
-const errorBox=document.querySelector('#vmwError');
-function fail(text){loading.hidden=true;app.hidden=true;errorBox.hidden=false;errorBox.innerHTML=`<strong>Zugriff nicht möglich.</strong><br>${text}<br><br><a class="btn btn-secondary btn-small" href="kunde.html">Zurück zum Kundenportal</a>`;}
-function setAll(selector,value){document.querySelectorAll(selector).forEach(el=>el.textContent=value||'–');}
-function activeLicense(l){return ['active','aktiv'].includes(String(l.status||'').toLowerCase());}
-function isManagerWeb(l){return /vereinsmanager\s*web/i.test(String(l.productName||l.product||''));}
-
-document.querySelector('[data-vmw-logout]')?.addEventListener('click',async()=>{await signOut(auth);window.location.replace('login.html');});
-
-onAuthStateChanged(auth,async user=>{
-  if(!user){window.location.replace('login.html');return;}
-  try{
-    const profileSnap=await getDoc(doc(db,'users',user.uid));
-    if(!profileSnap.exists()) return fail('Für diesen Firebase-Zugang ist kein HOGAsports-Benutzerprofil hinterlegt.');
-    const profile=profileSnap.data();
-    if(profile.active===false) return fail('Dieser HOGAsports-Zugang ist deaktiviert.');
-    const role=String(profile.role||'').toLowerCase();
-    if(!['customer_admin','customer','tournament_manager'].includes(role)) return fail('Dieser Zugang ist keinem Kundenbereich zugeordnet.');
-    const customerId=String(profile.customerId||'');
-    if(!customerId) return fail('Dem Benutzer ist noch kein Kunde/Verein zugeordnet.');
-    const [customerSnap,licenseSnap]=await Promise.all([
-      getDoc(doc(db,'customers',customerId)),
-      getDocs(query(collection(db,'licenses'),where('customerId','==',customerId)))
-    ]);
-    if(!customerSnap.exists()) return fail('Der zugeordnete Verein wurde nicht gefunden.');
-    const licenses=licenseSnap.docs.map(d=>({id:d.id,...d.data()}));
-    if(!licenses.some(l=>activeLicense(l)&&isManagerWeb(l))) return fail('Für diesen Verein ist keine aktive Lizenz „Vereinsmanager Web“ freigeschaltet.');
-    const customer=customerSnap.data();
-    setAll('[data-vmw-user]',profile.displayName||user.displayName||'Benutzer');
-    setAll('[data-vmw-email]',profile.email||user.email||'');
-    setAll('[data-vmw-club]',customer.name||customer.clubName||'Ihr Verein');
-    loading.hidden=true;errorBox.hidden=true;app.hidden=false;
-  }catch(err){console.error(err);fail('Die Daten konnten nicht geladen werden. Bitte prüfen Sie Verbindung und Firestore-Regeln.');}
-});
+import { doc,getDoc,setDoc,collection,getDocs,query,where,serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { getFunctions,httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
+const functions=getFunctions(app,'europe-west1'), createClubUser=httpsCallable(functions,'createClubUser'), updateClubUser=httpsCallable(functions,'updateClubUser'), sendClubAccessMail=httpsCallable(functions,'sendClubAccessMail');
+const loading=document.querySelector('#vmwLoading'),appEl=document.querySelector('#vmwApp'),errorBox=document.querySelector('#vmwError'); let ctx={};
+const esc=v=>{const d=document.createElement('div');d.textContent=String(v??'');return d.innerHTML};
+function fail(t){loading.hidden=true;appEl.hidden=true;errorBox.hidden=false;errorBox.innerHTML=`<strong>Zugriff nicht möglich.</strong><br>${t}<br><br><a class="btn btn-secondary btn-small" href="vereinsmanager-login.html">Zum Vereinsmanager-Login</a>`}
+function all(s,v){document.querySelectorAll(s).forEach(e=>e.textContent=v||'–')}; function activeLicense(l){return ['active','aktiv'].includes(String(l.status||'').toLowerCase())}; function isVM(l){return /vereinsmanager\s*web/i.test(String(l.productName||l.product||''))};
+function isClubRole(r){return ['club_admin','club_board','club_treasurer'].includes(r)}; function isVMAdmin(){return ['customer_admin','club_admin'].includes(ctx.role)};
+function roleLabel(r){return r==='club_admin'?'Vereinsmanager-Admin':r==='club_board'?'Vorstand':r==='club_treasurer'?'Kassenwart':r==='customer_admin'?'Kunden-Administrator':'Benutzer'}
+function openPanel(name){document.querySelectorAll('[data-vmw-panel]').forEach(p=>p.hidden=p.dataset.vmwPanel!==name);document.querySelectorAll('[data-vmw-tab]').forEach(a=>a.classList.toggle('active',a.dataset.vmwTab===name));}
+document.querySelectorAll('[data-vmw-tab]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();openPanel(a.dataset.vmwTab)}));document.querySelectorAll('[data-open-vmw]').forEach(a=>a.addEventListener('click',()=>openPanel(a.dataset.openVmw)));document.querySelector('[data-vmw-logout]')?.addEventListener('click',async()=>{await signOut(auth);location.replace('vereinsmanager-login.html')});
+async function loadClub(){const ref=doc(db,'customers',ctx.customerId,'clubData','profile'),s=await getDoc(ref), data=s.exists()?s.data():{}; const f=document.querySelector('#vmwClubForm'); for(const e of f.elements) if(e.name)e.value=data[e.name]??(e.name==='name'?ctx.customer.name||'':'');}
+async function loadUsers(){const snap=await getDocs(query(collection(db,'users'),where('customerId','==',ctx.customerId)));ctx.users=snap.docs.map(d=>({id:d.id,...d.data()})).filter(u=>isClubRole(String(u.role||''))||u.role==='customer_admin'); all('[data-vmw-user-count]',String(ctx.users.filter(u=>u.active!==false).length)); const t=document.querySelector('#vmwUserList');t.innerHTML=ctx.users.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${ctx.users.map(u=>`<tr><td>${esc(u.displayName||'–')}</td><td>${esc(u.email||'–')}</td><td>${esc(roleLabel(u.role))}</td><td>${u.active===false?'Gesperrt':'Aktiv'}</td><td>${isClubRole(u.role)?`<button class="table-action" data-edit-club-user="${u.id}">Bearbeiten</button> <button class="table-action secondary" data-invite-club-user="${u.id}">Zugangslink</button>`:'<span class="admin-subline">über HOGAsports verwaltet</span>'}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Vereinsmanager-Benutzer angelegt.</div>';t.querySelectorAll('[data-edit-club-user]').forEach(b=>b.onclick=()=>editUser(b.dataset.editClubUser));t.querySelectorAll('[data-invite-club-user]').forEach(b=>b.onclick=async()=>{try{await sendClubAccessMail({uid:b.dataset.inviteClubUser});alert('Zugangslink wurde versendet.')}catch(e){alert(e.message)}})}
+function editUser(id){const u=ctx.users.find(x=>x.id===id),f=document.querySelector('#vmwUserForm');f.hidden=false;f.elements.uid.value=u.id;f.elements.displayName.value=u.displayName||'';f.elements.email.value=u.email||'';f.elements.role.value=u.role;f.elements.active.value=String(u.active!==false)}
+document.querySelector('#vmwNewUser')?.addEventListener('click',()=>{const f=document.querySelector('#vmwUserForm');f.reset();f.elements.uid.value='';f.hidden=false});document.querySelector('#vmwCancelUser')?.addEventListener('click',()=>document.querySelector('#vmwUserForm').hidden=true);
+document.querySelector('#vmwClubForm')?.addEventListener('submit',async e=>{e.preventDefault();if(!isVMAdmin())return;const f=new FormData(e.currentTarget),data={};for(const [k,v] of f)data[k]=String(v).trim();data.updatedAt=serverTimestamp();data.updatedBy=auth.currentUser.uid;await setDoc(doc(db,'customers',ctx.customerId,'clubData','profile'),data,{merge:true});all('[data-vmw-club]',data.name);alert('Vereinsdaten gespeichert.')});
+document.querySelector('#vmwUserForm')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget),payload={uid:String(f.get('uid')||''),displayName:String(f.get('displayName')||'').trim(),email:String(f.get('email')||'').trim(),role:String(f.get('role')),active:String(f.get('active'))==='true'};try{if(payload.uid)await updateClubUser(payload);else await createClubUser(payload);e.currentTarget.hidden=true;await loadUsers();alert(payload.uid?'Benutzer gespeichert.':'Benutzer angelegt und Zugangslink versendet.')}catch(err){alert(err.message)}});
+onAuthStateChanged(auth,async user=>{if(!user){location.replace('vereinsmanager-login.html');return}try{const ps=await getDoc(doc(db,'users',user.uid));if(!ps.exists())return fail('Kein HOGAsports-Benutzerprofil vorhanden.');const p=ps.data(),role=String(p.role||'');if(p.active===false||(!isClubRole(role)&&role!=='customer_admin'))return fail('Dieser Zugang ist nicht für den Vereinsmanager freigeschaltet.');const customerId=String(p.customerId||'');if(!customerId)return fail('Kein Verein zugeordnet.');const [cs,ls]=await Promise.all([getDoc(doc(db,'customers',customerId)),getDocs(query(collection(db,'licenses'),where('customerId','==',customerId)))]);if(!cs.exists())return fail('Verein nicht gefunden.');if(!ls.docs.map(d=>d.data()).some(l=>activeLicense(l)&&isVM(l)))return fail('Keine aktive Lizenz „Vereinsmanager Web“ vorhanden.');ctx={user,profile:p,role,customerId,customer:cs.data()};all('[data-vmw-user]',p.displayName||user.email);all('[data-vmw-email]',p.email||user.email);all('[data-vmw-club]',cs.data().name||'Ihr Verein');if(!isVMAdmin())document.querySelectorAll('[data-vmw-admin-only]').forEach(e=>e.hidden=true);const form=document.querySelector('#vmwClubForm');if(!isVMAdmin())Array.from(form.elements).forEach(e=>e.disabled=true);await loadClub();if(isVMAdmin())await loadUsers();loading.hidden=true;appEl.hidden=false}catch(e){console.error(e);fail('Daten konnten nicht geladen werden. Bitte Firestore-Regeln prüfen.')}});
