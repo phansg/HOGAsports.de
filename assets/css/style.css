@@ -127,3 +127,6 @@ h1{font-size:clamp(2.6rem,5vw,5rem);line-height:1.02;letter-spacing:-.045em;marg
 
 /* Vereinsmanager Web V0.4 – Beiträge */
 .vmw-section-title{font-size:1.15rem;margin:24px 0 10px}.vmw-assignment-box{margin-top:24px;background:#fff;border:1px solid #e1e1de;border-radius:16px;padding:18px}.vmw-assignment-box h2{margin:0 0 4px}.vmw-assignment-box p{margin:0 0 14px;color:var(--muted)}.vmw-assignment-form{display:grid;grid-template-columns:1.3fr 1.3fr 1fr auto;gap:12px;align-items:end}.vmw-assignment-form .field{margin:0}.admin-subline{display:block;color:var(--muted);margin-top:3px}@media(max-width:900px){.vmw-assignment-form{grid-template-columns:1fr 1fr}}@media(max-width:620px){.vmw-assignment-form{grid-template-columns:1fr}}
+
+/* V0.9.15 · Vereinsmanager Web V0.6 */
+.vmw-invoice-actions{display:flex;justify-content:flex-end;margin:0 0 12px}.vmw-finance-summary{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:18px}.vmw-finance-form{display:grid;grid-template-columns:140px 160px 150px 1fr 1.4fr 1fr auto;gap:12px;align-items:end}.vmw-finance-form .field{margin:0}@media(max-width:1100px){.vmw-finance-form{grid-template-columns:repeat(3,1fr)}}@media(max-width:700px){.vmw-finance-form,.vmw-finance-summary{grid-template-columns:1fr}}
