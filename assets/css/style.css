@@ -151,3 +151,19 @@ h1{font-size:clamp(2.6rem,5vw,5rem);line-height:1.02;letter-spacing:-.045em;marg
 
 /* V0.9.19 · Vereinsmanager Web V0.9 · Zutritt & Anwesenheit */
 .vmw-module-badge{white-space:nowrap;background:#f7e4e5;color:#8e1b20;border:1px solid #e9c4c6;border-radius:999px;padding:8px 12px;font-size:.76rem;font-weight:850}.vmw-access-summary{grid-template-columns:repeat(3,minmax(0,1fr));margin:18px 0}.vmw-access-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.vmw-access-grid>.vmw-card,.vmw-access-events{background:#fff;border:1px solid #e1e1de;border-radius:16px;padding:20px}.vmw-card-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.vmw-card-head h2,.vmw-access-grid h2,.vmw-access-events h2{margin:0 0 5px}.vmw-card-head p,.vmw-access-grid>article>p,.vmw-access-events>p{margin:0 0 16px;color:var(--muted)}.vmw-access-events{margin-top:16px}.vmw-key-state{display:inline-block;padding:4px 8px;border-radius:999px;background:#eee;color:#666;font-size:.72rem;font-weight:800}.vmw-key-state.is-active{background:#e9f6ed;color:#28723c}@media(max-width:900px){.vmw-access-grid{grid-template-columns:1fr}}@media(max-width:650px){.vmw-access-summary{grid-template-columns:1fr}.vmw-card-head{flex-direction:column}}
+
+/* Mitgliederportal V2 */
+.mp-card-head,.vmw-change-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.mp-card-head h2,.vmw-change-head strong{margin-top:0}
+.mp-card-head p{margin:4px 0 0;color:#667085}
+.mp-change-form{margin-top:18px;padding-top:18px;border-top:1px solid #eadede}
+.mp-change-status{margin-top:14px}
+.vmw-foundation.is-success{border-left-color:#5c8b35}
+.vmw-change-review{margin:0 0 22px;padding:18px;border:1px solid #eadede;border-radius:16px;background:#fff}
+.vmw-change-card{padding:16px 0;border-bottom:1px solid #eee}
+.vmw-change-card:last-child{border-bottom:0}
+.vmw-change-head small{display:block;margin-top:4px;color:#667085}
+.vmw-change-line{display:grid;grid-template-columns:minmax(130px,.8fr) minmax(120px,1fr) 24px minmax(120px,1fr);gap:10px;align-items:center;padding:8px 0}
+.vmw-change-line>span{padding:8px 10px;background:#f7f7f7;border-radius:8px;word-break:break-word}
+.vmw-change-line>b{text-align:center}
+@media(max-width:760px){.mp-card-head,.vmw-change-head{flex-direction:column}.vmw-change-line{grid-template-columns:1fr}.vmw-change-line>b{transform:rotate(90deg)}}
