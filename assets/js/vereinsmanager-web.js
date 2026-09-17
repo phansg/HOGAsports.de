@@ -45,10 +45,26 @@ document.querySelector('#vmwDeleteMember')?.addEventListener('click',async()=>{c
 
 function canReviewMemberChanges(){return ['customer_admin','club_admin','club_board'].includes(ctx.role)}
 const memberChangeLabels={salutation:'Anrede',firstName:'Vorname',lastName:'Nachname',birthDate:'Geburtsdatum',street:'Straße / Hausnummer',postalCode:'PLZ',city:'Ort',phone:'Telefon',mobile:'Mobil',email:'E-Mail',accountHolder:'Kontoinhaber',memberIban:'IBAN',memberBic:'BIC',paymentMethod:'Zahlungsart'};
+
+function renderMemberChangeDashboard(count){
+  const dash=document.querySelector('#panel-dashboard .vmw-dashboard-grid')||document.querySelector('#panel-dashboard .vmw-stat-grid')||document.querySelector('#panel-dashboard');
+  if(!dash)return;
+  let card=document.querySelector('#vmwDashboardMemberChanges');
+  if(!card){
+    card=document.createElement('button');
+    card.type='button';card.id='vmwDashboardMemberChanges';card.className='vmw-stat-card vmw-dashboard-action';
+    card.innerHTML='<span class="vmw-stat-icon">👤</span><span><strong data-dashboard-change-count>0</strong><small>Stammdatenänderungen offen</small></span>';
+    card.onclick=()=>{const nav=document.querySelector('[data-panel="members"]');if(nav)nav.click();setTimeout(()=>document.querySelector('#vmwMemberChangeReview')?.scrollIntoView({behavior:'smooth',block:'start'}),120)};
+    dash.appendChild(card);
+  }
+  const n=card.querySelector('[data-dashboard-change-count]');if(n)n.textContent=String(count||0);
+  card.hidden=!count;
+}
+
 async function loadMemberChangeRequests(){
   const box=document.querySelector('#vmwMemberChangeReview'),list=document.querySelector('#vmwMemberChangeList');if(!box||!list)return;
   if(!canReviewMemberChanges()){box.hidden=true;return} box.hidden=false;
-  try{const r=await getClubMemberChangeRequests({}),rows=r.data?.requests||[];all('[data-vmw-change-count]',String(rows.length));
+  try{const r=await getClubMemberChangeRequests({}),rows=r.data?.requests||[];all('[data-vmw-change-count]',String(rows.length));renderMemberChangeDashboard(rows.length);
     list.innerHTML=rows.length?rows.map(x=>{const changes=x.changes||{},details=Object.entries(changes).map(([k,v])=>`<div class="vmw-change-line"><strong>${esc(memberChangeLabels[k]||k)}</strong><span>${esc(v.old||'–')}</span><b>→</b><span>${esc(v.new||'–')}</span></div>`).join('');
       return `<article class="vmw-change-card"><div class="vmw-change-head"><div><strong>${esc(x.memberNumber||'')} · ${esc(x.memberName||'Mitglied')}</strong><small>Änderung aus dem Mitgliederportal</small></div><div><button class="table-action" data-change-approve="${x.id}">Übernehmen</button> <button class="table-action secondary" data-change-reject="${x.id}">Ablehnen</button></div></div>${details}</article>`}).join(''):'<div class="empty-state compact">Keine offenen Stammdatenänderungen.</div>';
     list.querySelectorAll('[data-change-approve]').forEach(b=>b.onclick=()=>resolveMemberChange(b.dataset.changeApprove,'approve'));
