@@ -47,18 +47,11 @@ function canReviewMemberChanges(){return ['customer_admin','club_admin','club_bo
 const memberChangeLabels={salutation:'Anrede',firstName:'Vorname',lastName:'Nachname',birthDate:'Geburtsdatum',street:'Straße / Hausnummer',postalCode:'PLZ',city:'Ort',phone:'Telefon',mobile:'Mobil',email:'E-Mail',accountHolder:'Kontoinhaber',memberIban:'IBAN',memberBic:'BIC',paymentMethod:'Zahlungsart'};
 
 function renderMemberChangeDashboard(count){
-  const dash=document.querySelector('#panel-dashboard .vmw-kpi-grid')||document.querySelector('#panel-dashboard .vmw-dashboard-grid')||document.querySelector('#panel-dashboard .vmw-stat-grid')||document.querySelector('#panel-dashboard');
-  if(!dash)return;
-  let card=document.querySelector('#vmwDashboardMemberChanges');
-  if(!card){
-    card=document.createElement('button');
-    card.type='button';card.id='vmwDashboardMemberChanges';card.className='vmw-kpi vmw-dashboard-action';
-    card.innerHTML='<span class="vmw-stat-icon">👤</span><span><strong data-dashboard-change-count>0</strong><small>Stammdatenänderungen offen</small></span>';
-    card.onclick=()=>{const nav=document.querySelector('[data-panel="members"]');if(nav)nav.click();setTimeout(()=>document.querySelector('#vmwMemberChangeReview')?.scrollIntoView({behavior:'smooth',block:'start'}),120)};
-    dash.appendChild(card);
-  }
-  const n=card.querySelector('[data-dashboard-change-count]');if(n)n.textContent=String(count||0);
-  card.hidden=!count;
+  const card=document.querySelector('#vmwDashboardMemberChanges');
+  if(!card)return;
+  const n=card.querySelector('[data-dashboard-change-count]');
+  if(n)n.textContent=String(count||0);
+  card.hidden=Number(count||0)<1;
 }
 
 async function loadMemberChangeRequests(){
