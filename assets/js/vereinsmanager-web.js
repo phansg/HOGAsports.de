@@ -154,7 +154,7 @@ async function loadClubMessages(){
   const target=document.querySelector('#vmwMessageList');if(!target)return;
   try{
     const r=await getClubMessages({}),rows=r.data?.messages||[];
-    target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Datum</th><th>Betreff</th><th>Empfänger</th><th>E-Mail</th><th>Autom. Löschung</th><th></th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(x.createdAt?new Date(x.createdAt).toLocaleString('de-DE'):'–')}</td><td><strong>${esc(x.subject)}</strong><small class="vmw-table-note">${esc(String(x.body||'').slice(0,100))}${String(x.body||'').length>100?' …':''}</small></td><td>${esc(x.recipientMode==='all'?'Alle aktiven Mitglieder':`${x.recipientCount||0} ausgewählt`)}</td><td>${x.sendEmail?`Ja${Number.isFinite(x.emailsSent)?` · ${x.emailsSent} versendet`:''}`:'Nein'}</td><td>${esc(x.deleteAt||'–')}</td><td><button class="table-action danger" data-delete-message="${x.id}">Löschen</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Vereinsnachrichten versendet.</div>';
+    target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Datum</th><th>Betreff</th><th>Empfänger</th><th>E-Mail</th><th>Autom. Löschung</th><th></th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(x.createdAt?new Date(x.createdAt).toLocaleString('de-DE'):'–')}</td><td><strong>${esc(x.subject)}</strong><small class="vmw-table-note">${esc(String(x.body||'').slice(0,100))}${String(x.body||'').length>100?' …':''}</small></td><td>${esc(x.recipientMode==='all'?'Alle aktiven Mitglieder':`${x.recipientCount||0} ausgewählt`)}</td><td>${x.sendEmail?`Ja${Number.isFinite(x.emailsSent)?` · ${x.emailsSent} versendet`:''}`:'Nein'}${x.attachments?.length?`<small class="vmw-table-note">📎 ${x.attachments.length} Anhang/Anhänge</small>`:''}</td><td>${esc(x.deleteAt||'–')}</td><td><button class="table-action danger" data-delete-message="${x.id}">Löschen</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Vereinsnachrichten versendet.</div>';
     target.querySelectorAll('[data-delete-message]').forEach(b=>b.onclick=async()=>{if(!await hogaConfirm('Diese Nachricht wirklich für alle Empfänger löschen?'))return;try{await deleteClubMessage({id:b.dataset.deleteMessage});await loadClubMessages();hogaAlert('Nachricht wurde gelöscht.')}catch(e){hogaAlert(e.message)}});
   }catch(e){console.error(e);target.innerHTML='<div class="empty-state">Nachrichten konnten nicht geladen werden.</div>'}
 }
@@ -164,10 +164,31 @@ document.querySelector('#vmwNewMessage')?.addEventListener('click',()=>{
 });
 document.querySelector('#vmwCancelMessage')?.addEventListener('click',()=>document.querySelector('#vmwMessageForm').hidden=true);
 document.querySelector('#vmwMessageRecipientMode')?.addEventListener('change',renderMessageRecipients);
+
+const formatFileSize=n=>n>=1048576?`${(n/1048576).toFixed(1)} MB`:`${Math.max(1,Math.round(n/1024))} KB`;
+function renderSelectedMessageFiles(){
+  const input=document.querySelector('#vmwMessageFiles'),box=document.querySelector('#vmwMessageFileList');if(!input||!box)return;
+  box.innerHTML=[...input.files].map(f=>`<span>📎 ${esc(f.name)} <small>${formatFileSize(f.size)}</small></span>`).join('');
+}
+document.querySelector('#vmwMessageFiles')?.addEventListener('change',renderSelectedMessageFiles);
+async function messageFilesPayload(){
+  const files=[...(document.querySelector('#vmwMessageFiles')?.files||[])];
+  if(files.length>5)throw new Error('Maximal 5 Anhänge sind möglich.');
+  let total=0;const result=[];
+  for(const f of files){
+    if(f.size>5*1024*1024)throw new Error(`${f.name} ist größer als 5 MB.`);
+    total+=f.size;if(total>12*1024*1024)throw new Error('Die Anhänge dürfen zusammen maximal 12 MB groß sein.');
+    const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result).split(',')[1]||'');r.onerror=()=>reject(new Error(`Datei ${f.name} konnte nicht gelesen werden.`));r.readAsDataURL(f)});
+    result.push({name:f.name,type:f.type||'application/octet-stream',data});
+  }
+  return result;
+}
+
 document.querySelector('#vmwMessageForm')?.addEventListener('submit',async e=>{
   e.preventDefault();const form=e.currentTarget,fd=new FormData(form),mode=String(fd.get('recipientMode')||'all'),
-  recipientIds=mode==='selected'?[...document.querySelectorAll('[data-message-recipient]:checked')].map(x=>x.value):[],
-  payload={subject:String(fd.get('subject')||'').trim(),body:String(fd.get('body')||'').trim(),recipientMode:mode,recipientIds,deleteAt:String(fd.get('deleteAt')||''),sendEmail:fd.get('sendEmail')==='on'};
+  recipientIds=mode==='selected'?[...document.querySelectorAll('[data-message-recipient]:checked')].map(x=>x.value):[];
+  let attachments=[];try{attachments=await messageFilesPayload()}catch(err){return hogaAlert(err.message,'Anhang nicht möglich')}
+  const payload={subject:String(fd.get('subject')||'').trim(),body:String(fd.get('body')||'').trim(),recipientMode:mode,recipientIds,deleteAt:String(fd.get('deleteAt')||''),sendEmail:fd.get('sendEmail')==='on',attachments};
   if(mode==='selected'&&!recipientIds.length)return hogaAlert('Bitte mindestens ein Mitglied auswählen.');
   const emailNote=payload.sendEmail?'\n\nDie Mitteilung wird zusätzlich per E-Mail versendet.':'';
   if(!await hogaConfirm(`Nachricht jetzt an ${mode==='all'?'alle aktiven Mitglieder':recipientIds.length+' ausgewählte Mitglieder'} senden?${emailNote}`))return;
