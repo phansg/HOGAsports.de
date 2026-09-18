@@ -1,4 +1,5 @@
-import { auth,db } from './firebase-config.js';
+import { vereinsmanagerFirebase } from './firebase-config.js';
+const { auth, db } = vereinsmanagerFirebase;
 import { signInWithEmailAndPassword,signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { doc,getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 const f=document.querySelector('#vmwLoginForm'),m=document.querySelector('#vmwLoginMessage');function msg(t){m.textContent=t;m.hidden=false;m.className='portal-inline-message error'}f.addEventListener('submit',async e=>{e.preventDefault();try{const d=new FormData(f),c=await signInWithEmailAndPassword(auth,String(d.get('email')).trim(),String(d.get('password'))),s=await getDoc(doc(db,'users',c.user.uid)),r=s.exists()?String(s.data().role||''):'';if(!['customer_admin','club_admin','club_board','club_treasurer'].includes(r)){await signOut(auth);return msg('Dieser Zugang ist nicht für den Vereinsmanager Web freigeschaltet.')}location.replace('vereinsmanager-web.html')}catch(e){console.error(e);msg('Anmeldung nicht möglich. Bitte E-Mail-Adresse und Passwort prüfen.')}});
