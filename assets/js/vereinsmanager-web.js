@@ -192,7 +192,7 @@ document.querySelector('#vmwMessageForm')?.addEventListener('submit',async e=>{
   if(mode==='selected'&&!recipientIds.length)return hogaAlert('Bitte mindestens ein Mitglied auswählen.');
   const emailNote=payload.sendEmail?'\n\nDie Mitteilung wird zusätzlich per E-Mail versendet.':'';
   if(!await hogaConfirm(`Nachricht jetzt an ${mode==='all'?'alle aktiven Mitglieder':recipientIds.length+' ausgewählte Mitglieder'} senden?${emailNote}`))return;
-  try{const r=await createClubMessage(payload),d=r.data||{};form.hidden=true;await loadClubMessages();hogaAlert(`Nachricht wurde für ${d.recipientCount||0} Mitglied(er) bereitgestellt.${payload.sendEmail?` E-Mails versendet: ${d.emailsSent||0}${d.emailErrors?`, Fehler: ${d.emailErrors}`:''}.`:''}`,'Nachricht gesendet')}
+  try{const r=await createClubMessage(payload),d=r.data||{};form.reset();const fileList=document.querySelector('#vmwMessageFileList');if(fileList)fileList.innerHTML='';form.hidden=true;await loadClubMessages();hogaAlert(`Nachricht wurde für ${d.recipientCount||0} Mitglied(er) bereitgestellt.${payload.sendEmail?` E-Mails versendet: ${d.emailsSent||0}${d.emailErrors?`, Fehler: ${d.emailErrors}`:''}.`:''}`,'Nachricht gesendet')}
   catch(err){hogaAlert(err.message,'Nachricht nicht gesendet')}
 });
 document.querySelector('[data-vmw-tab="communication"]')?.addEventListener('click',loadClubMessages);
