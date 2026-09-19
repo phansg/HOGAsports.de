@@ -24,6 +24,18 @@ const listLicensedDesktopReleases = httpsCallable(functions, 'listLicensedDeskto
 const getLicensedDesktopDownload = httpsCallable(functions, 'getLicensedDesktopDownload');
 let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [], catalogProducts: [] };
 let currentUserUid = null;
+// Versionierter, im Quellcode gepflegter Katalog: Neue Web-/Court-Anwendungen hier bei Integration ergänzen.
+// Keine automatische Kundenzuweisung; nur tatsächlich integrierte Anwendungen aufführen.
+const HOGA_WEB_APPS = Object.freeze([
+  {id:'vereinsmanager-web',line:'web',name:'Vereinsmanager Web',sport:'Sportartenübergreifend',internalUrl:'vereinsmanager-web.html',version:'Webversion'}
+]);
+function availablePrograms(){return [
+  ...adminData.desktopProducts.map(p=>({id:p.id,line:'desktop',name:p.name,sport:p.sport,version:p.version||'',enabled:p.releaseStatus!=='blocked',licenseProduct:p.licenseProduct})),
+  ...HOGA_WEB_APPS.map(p=>({...p,enabled:adminData.catalogProducts.find(x=>x.id===p.id)?.enabled!==false})),
+  // Court-Programme werden erst bei Integration ihrer Anwendung ergänzt.
+];}
+function licenseIsCurrent(l){const day=new Date().toISOString().slice(0,10);return ['active','aktiv'].includes(String(l.status||'').toLowerCase())&&(!l.startDate||String(l.startDate).slice(0,10)<=day)&&(!l.endDate||String(l.endDate).slice(0,10)>=day);}
+
 
 function roleAllowed(role) {
   if (pageRole === 'admin') return role === 'admin';
@@ -144,7 +156,7 @@ async function loadCustomerPortal(user, profile, role) {
   setText('[data-license-count]',activeCount); setText('[data-member-count]',members.length); setText('[data-invoice-count]',invoices.length);
 
   const licenseList=document.querySelector('#licenseList');
-  if (licenseList) licenseList.innerHTML = licenses.length ? licenses.sort((a,b)=>String(a.productName||'').localeCompare(String(b.productName||''))).map(l=>`<article class="license-card"><div><span class="status ${statusClass(l.status)}">${escapeHtml(l.statusLabel||statusLabel(l.status))}</span><h3>${escapeHtml(l.productName||l.product||'HOGAsports Lizenz')}</h3><p>${escapeHtml(l.sport||'Sportart noch nicht hinterlegt')}</p></div><dl><div><dt>Lizenznummer</dt><dd>${escapeHtml(l.licenseNumber||'–')}</dd></div><div><dt>Beginn</dt><dd>${dateText(l.startDate)}</dd></div><div><dt>Ende</dt><dd>${dateText(l.endDate)}</dd></div></dl></article>`).join('') : '<div class="empty-state"><strong>Noch keine Lizenz hinterlegt.</strong><span>Gebuchte HOGAsports-Produkte erscheinen später automatisch hier.</span></div>';
+  if (licenseList) licenseList.innerHTML = licenses.length ? licenses.sort((a,b)=>String(a.productName||'').localeCompare(String(b.productName||''))).map(l=>`<article class="license-card"><div><span class="status ${statusClass(l.status)}">${escapeHtml(l.statusLabel||statusLabel(l.status))}</span><h3>${escapeHtml(l.programName||l.productName||l.product||'HOGAsports Lizenz')}</h3><p>${escapeHtml(l.sport||'Sportart noch nicht hinterlegt')}</p></div><dl><div><dt>Lizenznummer</dt><dd>${escapeHtml(l.licenseNumber||'–')}</dd></div><div><dt>Beginn</dt><dd>${dateText(l.startDate)}</dd></div><div><dt>Ende</dt><dd>${dateText(l.endDate)}</dd></div></dl></article>`).join('') : '<div class="empty-state"><strong>Noch keine Lizenz hinterlegt.</strong><span>Gebuchte HOGAsports-Produkte erscheinen später automatisch hier.</span></div>';
 
   const memberList=document.querySelector('#memberList');
   if (memberList) memberList.innerHTML = members.length ? `<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th></tr></thead><tbody>${members.map(m=>`<tr><td>${escapeHtml(m.displayName||m.name||'–')}</td><td>${escapeHtml(m.email||'–')}</td><td>${escapeHtml(roleLabel(String(m.role||'customer').toLowerCase()))}</td><td><span class="status ${m.active===false?'status-dev':'status-available'}">${m.active===false?'Gesperrt':'Aktiv'}</span></td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">Keine Benutzer gefunden.</div>';
@@ -152,8 +164,8 @@ async function loadCustomerPortal(user, profile, role) {
 
   const webProductList=document.querySelector('#webProductList');
   if (webProductList) {
-    const activeLicenses = licenses.filter(l => ['active','aktiv'].includes(String(l.status||'').toLowerCase()));
-    const managerLicense = activeLicenses.find(l => /vereinsmanager\s*web/i.test(String(l.productName||l.product||'')));
+    const activeLicenses = licenses.filter(licenseIsCurrent);
+    const managerLicense = activeLicenses.find(l => licenseIsCurrent(l) && (l.programId==='vereinsmanager-web' || (!l.programId && /vereinsmanager\s*web/i.test(String(l.productName||l.product||'')))));
     const tournamentLicense = activeLicenses.find(l => /(?:tournament|turniermanager)\s*web/i.test(String(l.productName||l.product||'')));
     const cards = [];
     if (managerLicense) cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet · Webanwendung</span><h3>Vereinsmanager Web</h3><p>Zentrale Vereinsverwaltung für Mitglieder, Beiträge, Rechnungen und Finanzen.</p></div><div class="product-actions"><a class="btn btn-primary" href="vereinsmanager-web.html">Vereinsmanager starten</a><button class="btn btn-secondary" type="button" data-product-copy="vereinsmanager-web.html">Start-Link kopieren</button><button class="btn btn-secondary" type="button" data-product-install="vereinsmanager-web.html">Als Web-App installieren</button></div></article>`);
@@ -218,7 +230,7 @@ function renderAdminCustomers(){
 function renderAdminLicenses(){
   const target=document.querySelector('#adminLicenseList'); if(!target) return;
   const rows=[...adminData.licenses].sort((a,b)=>customerName(a.customerId).localeCompare(customerName(b.customerId),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Produkt</th><th>Sportart</th><th>Lizenz</th><th>Laufzeit</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(l=>`<tr><td>${escapeHtml(customerName(l.customerId))}</td><td>${escapeHtml(l.productName||l.product||'–')}</td><td>${escapeHtml(l.sport||'–')}</td><td>${escapeHtml(l.licenseNumber||'–')}</td><td>${dateText(l.startDate)} – ${dateText(l.endDate)}</td><td><span class="status ${statusClass(l.status)}">${escapeHtml(statusLabel(l.status))}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-license="${l.id}">Bearbeiten</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Lizenz vorhanden.</strong><span>Lege die erste Lizenz für einen Kunden an.</span></div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Produkt</th><th>Sportart</th><th>Lizenz</th><th>Laufzeit</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(l=>`<tr><td>${escapeHtml(customerName(l.customerId))}</td><td>${escapeHtml(l.programName||l.productName||l.product||'–')}<span class="admin-subline">${escapeHtml(l.productName||'')}</span></td><td>${escapeHtml(l.sport||'–')}</td><td>${escapeHtml(l.licenseNumber||'–')}</td><td>${dateText(l.startDate)} – ${dateText(l.endDate)}</td><td><span class="status ${statusClass(l.status)}">${escapeHtml(statusLabel(l.status))}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-license="${l.id}">Bearbeiten</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Lizenz vorhanden.</strong><span>Lege die erste Lizenz für einen Kunden an.</span></div>';
   target.querySelectorAll('[data-edit-license]').forEach(btn=>btn.addEventListener('click',()=>fillLicenseForm(btn.dataset.editLicense)));
 }
 function renderAdminUsers(){
@@ -240,7 +252,20 @@ function isoDateInput(value){ if(!value) return ''; const d=typeof value.toDate=
 function openForm(id){const f=document.getElementById(id);if(f){f.hidden=false;f.scrollIntoView({behavior:'smooth',block:'nearest'});}}
 function resetForm(id){const f=document.getElementById(id);if(f){f.reset();f.querySelectorAll('input[type="hidden"]').forEach(hidden=>hidden.value='');f.hidden=true;}}
 function fillCustomerForm(id){const c=adminData.customers.find(x=>x.id===id);const f=document.querySelector('#customerForm');if(!c||!f)return;f.elements.docId.value=id;['name','contactName','email','phone','street','postalCode','city','customerType'].forEach(k=>{if(f.elements[k])f.elements[k].value=c[k]??'';});f.elements.active.value=String(c.active!==false);openForm('customerForm');}
-function fillLicenseForm(id){const l=adminData.licenses.find(x=>x.id===id);const f=document.querySelector('#licenseForm');if(!l||!f)return;f.elements.docId.value=id;['customerId','productName','sport','licenseNumber','status'].forEach(k=>{if(f.elements[k])f.elements[k].value=l[k]??'';});f.elements.startDate.value=isoDateInput(l.startDate);f.elements.endDate.value=isoDateInput(l.endDate);openForm('licenseForm');}
+function syncLicenseProgramSelect(preferred=''){
+  const form=document.getElementById('licenseForm');if(!form)return;
+  const line=form.elements.productLine.value,sport=form.elements.sport.value;
+  const products=availablePrograms().filter(p=>p.enabled&&p.line===line);
+  const sports=[...new Set(products.map(p=>p.sport))];
+  const sportSelect=form.elements.sport;
+  sportSelect.innerHTML='<option value="">Bitte auswählen</option>'+sports.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(x)}</option>`).join('');
+  if(sports.includes(sport))sportSelect.value=sport;
+  const options=products.filter(p=>p.sport===sportSelect.value);
+  form.elements.programId.innerHTML='<option value="">Bitte auswählen</option>'+options.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+  if(options.some(p=>p.id===preferred))form.elements.programId.value=preferred;
+  form.elements.licenseVersion.value=options.find(p=>p.id===form.elements.programId.value)?.version||'';
+}
+function fillLicenseForm(id){const l=adminData.licenses.find(x=>x.id===id);const f=document.querySelector('#licenseForm');if(!l||!f)return;f.elements.docId.value=id;['customerId','licenseNumber','status'].forEach(k=>{if(f.elements[k])f.elements[k].value=l[k]??'';});const p=availablePrograms().find(x=>x.id===l.programId);f.elements.productLine.value=p?.line||l.productLine||'';syncLicenseProgramSelect();f.elements.sport.value=p?.sport||l.sport||'';syncLicenseProgramSelect(l.programId||'');f.elements.startDate.value=isoDateInput(l.startDate);f.elements.endDate.value=isoDateInput(l.endDate);openForm('licenseForm');}
 function syncUserCustomerRequirement(){
   const f=document.querySelector('#userForm'); if(!f) return;
   const isAdmin=f.elements.role.value==='admin';
@@ -486,36 +511,17 @@ function catalogSafeUrl(value){
 function renderWebCatalog(){
   for(const line of ['web','court']){
     const target=document.getElementById(line+'CatalogList');if(!target)continue;
-    const items=adminData.catalogProducts.filter(p=>p.line===line).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'de'));
-    target.innerHTML=items.length?`<table class="portal-table"><thead><tr><th>Programm</th><th>Sportart</th><th>Version</th><th>Status</th><th>Interner Link</th><th></th></tr></thead><tbody>${items.map(item=>`<tr><td>${escapeHtml(item.name||'')}</td><td>${escapeHtml(item.sport||'')}</td><td>${escapeHtml(item.version||'–')}</td><td>${item.status==='blocked'?'Gesperrt':item.status==='ready'?'Bereit':'Entwurf'}</td><td>${catalogSafeUrl(item.internalUrl)?`<a href="${escapeHtml(catalogSafeUrl(item.internalUrl))}" target="_blank" rel="noopener noreferrer">Öffnen (Anmeldung ggf. nötig)</a>`:'–'}</td><td><button type="button" class="table-action" data-edit-catalog="${escapeHtml(item.id)}">Bearbeiten</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Programme angelegt. Bereits vorhandene Anwendungen werden nicht automatisch hinzugefügt oder freigeschaltet.</div>';
-    target.querySelectorAll('[data-edit-catalog]').forEach(b=>b.addEventListener('click',()=>openCatalogEditor(line,b.dataset.editCatalog)));
+    const items=availablePrograms().filter(p=>p.line===line);
+    target.innerHTML=items.length?`<table class="portal-table"><thead><tr><th>Programm</th><th>Sportart</th><th>Version</th><th>Verfügbarkeit</th><th>Interner Aufruf</th><th></th></tr></thead><tbody>${items.map(p=>`<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.sport)}</td><td>${escapeHtml(p.version)}</td><td>${p.enabled?'Aktiv':'Deaktiviert'}</td><td><a href="${escapeHtml(p.internalUrl)}" target="_blank" rel="noopener noreferrer">Öffnen (Anmeldung erforderlich)</a></td><td><button type="button" class="table-action" data-toggle-catalog="${escapeHtml(p.id)}">${p.enabled?'Deaktivieren':'Aktivieren'}</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine integrierte Court-Anwendung vorhanden. Sobald wir eine Court-Webanwendung in die Plattform integrieren, wird sie in den Produktkatalog aufgenommen.</div>';
+    target.querySelectorAll('[data-toggle-catalog]').forEach(btn=>btn.addEventListener('click',async()=>{
+      const p=items.find(x=>x.id===btn.dataset.toggleCatalog);if(!p)return;
+      btn.disabled=true;
+      try{await setDoc(doc(db,'productCatalog',p.id),{line:p.line,enabled:!p.enabled,updatedAt:serverTimestamp()},{merge:true});await loadAdminPortal();showPortalMessage(p.name+': '+(p.enabled?'deaktiviert':'aktiviert')+'.');}
+      catch(e){console.error(e);btn.disabled=false;showPortalMessage('Status konnte nicht gespeichert werden.','error');}
+    }));
   }
 }
-function openCatalogEditor(line,id=''){
-  const f=document.getElementById('catalogProductForm');if(!f)return;
-  f.reset();const item=adminData.catalogProducts.find(p=>p.id===id&&p.line===line);
-  f.elements.docId.value=item?.id||'';f.elements.line.value=line;
-  for(const key of ['name','sport','version','internalUrl','notes','status'])if(item&&f.elements[key])f.elements[key].value=item[key]||'';
-  document.getElementById('catalogEditorTitle').textContent=(line==='court'?'HOGAsports Court':'Tournament Web')+' · '+(item?'Programm bearbeiten':'Programm anlegen');
-  activateTab('catalog-editor');
-}
-function initWebCatalog(){
-  document.querySelectorAll('[data-new-catalog]').forEach(b=>b.addEventListener('click',()=>openCatalogEditor(b.dataset.newCatalog)));
-  document.getElementById('catalogCancel')?.addEventListener('click',()=>activateTab(document.getElementById('catalogProductForm').elements.line.value==='court'?'court-products':'web-products'));
-  const f=document.getElementById('catalogProductForm');if(!f)return;
-  f.addEventListener('submit',async event=>{
-    event.preventDefault();const fd=new FormData(f),id=String(fd.get('docId')||''),line=String(fd.get('line')||'');
-    if(!['web','court'].includes(line))return;
-    const rawUrl=String(fd.get('internalUrl')||'').trim(),internalUrl=catalogSafeUrl(rawUrl);
-    if(rawUrl&&!internalUrl){showPortalMessage('Bitte einen gültigen HTTPS-Aufruflink eingeben.','error');return;}
-    const data={line,name:String(fd.get('name')||'').trim(),sport:String(fd.get('sport')||''),version:String(fd.get('version')||'').trim(),internalUrl,notes:String(fd.get('notes')||'').trim(),status:String(fd.get('status')||'draft'),updatedAt:serverTimestamp()};
-    if(!data.name||!data.sport)return;
-    const submit=f.querySelector('[type="submit"]');submit.disabled=true;
-    try{if(id)await updateDoc(doc(db,'productCatalog',id),data);else await addDoc(collection(db,'productCatalog'),{...data,createdAt:serverTimestamp()});await loadAdminPortal();activateTab(line==='court'?'court-products':'web-products');showPortalMessage('Programm im internen Katalog gespeichert. Keine Kundenlizenz wurde angelegt.');}
-    catch(e){console.error(e);showPortalMessage('Programm konnte nicht gespeichert werden. Bitte Firestore-Regeln prüfen.','error');}
-    finally{submit.disabled=false;}
-  });
-}
+function initWebCatalog(){} // Web-/Court-Programme werden ausschließlich im Quellcode registriert.
 
 async function loadAdminPortal(){
   const [customersSnap, licensesSnap, usersSnap, invoicesSnap, interestsSnap, ordersSnap, settingsSnap, desktopSnap, catalogSnap]=await Promise.all([
@@ -537,7 +543,7 @@ async function loadAdminPortal(){
 }
 
 function initAdminForms(){
-  document.querySelectorAll('[data-toggle-form]').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.dataset.toggleForm;const f=document.getElementById(id);if(f.hidden){f.reset();f.querySelectorAll('input[type="hidden"]').forEach(h=>h.value='');if(id==='userForm')syncUserCustomerRequirement();openForm(id);}else resetForm(id);}));
+  document.querySelectorAll('[data-toggle-form]').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.dataset.toggleForm;const f=document.getElementById(id);if(f.hidden){f.reset();f.querySelectorAll('input[type="hidden"]').forEach(h=>h.value='');if(id==='userForm')syncUserCustomerRequirement();if(id==='licenseForm')syncLicenseProgramSelect();openForm(id);}else resetForm(id);}));
   document.querySelectorAll('[data-cancel-form]').forEach(btn=>btn.addEventListener('click',()=>resetForm(btn.dataset.cancelForm)));
 
   const customerForm=document.querySelector('#customerForm');
@@ -548,9 +554,16 @@ function initAdminForms(){
   });
 
   const licenseForm=document.querySelector('#licenseForm');
+  licenseForm?.elements.productLine.addEventListener('change',()=>{licenseForm.elements.sport.value='';syncLicenseProgramSelect();});
+  licenseForm?.elements.sport.addEventListener('change',()=>syncLicenseProgramSelect());
+  licenseForm?.elements.programId.addEventListener('change',()=>{licenseForm.elements.licenseVersion.value=availablePrograms().find(p=>p.id===licenseForm.elements.programId.value)?.version||'';});
   licenseForm?.addEventListener('submit',async e=>{
     e.preventDefault(); const fd=new FormData(licenseForm); const id=fd.get('docId');
-    const data={customerId:String(fd.get('customerId')||''),productName:String(fd.get('productName')||''),sport:String(fd.get('sport')||''),licenseNumber:String(fd.get('licenseNumber')||'').trim(),startDate:String(fd.get('startDate')||''),endDate:String(fd.get('endDate')||''),status:String(fd.get('status')||'planned'),updatedAt:serverTimestamp()};
+    const selected=availablePrograms().find(p=>p.id===String(fd.get('programId')||'')&&p.enabled&&p.line===String(fd.get('productLine')||'')&&p.sport===String(fd.get('sport')||''));
+    if(!selected){showPortalMessage('Bitte ein verfügbares Programm auswählen.','error');return;}
+    const data={customerId:String(fd.get('customerId')||''),productLine:selected.line,programId:selected.id,programName:selected.name,productName:selected.line==='desktop'?'HOGAsports Desktop Basic':selected.line==='web'?'HOGAsports Vereinsmanager Web':'HOGAsports Court',sport:selected.sport,licenseNumber:String(fd.get('licenseNumber')||'').trim(),startDate:String(fd.get('startDate')||''),endDate:String(fd.get('endDate')||''),status:String(fd.get('status')||'planned'),updatedAt:serverTimestamp()};
+    if(data.startDate&&data.endDate&&data.endDate<data.startDate){showPortalMessage('Das Lizenzende liegt vor dem Beginn.','error');return;}
+    if(data.productLine!=='desktop'&&(!data.startDate||!data.endDate)){showPortalMessage('Für Jahreslizenzen bitte Beginn und Ende angeben.','error');return;}
     try{if(id){await updateDoc(doc(db,'licenses',String(id)),data);}else{data.createdAt=serverTimestamp();await addDoc(collection(db,'licenses'),data);}resetForm('licenseForm');await loadAdminPortal();showPortalMessage(id?'Lizenz wurde aktualisiert.':'Lizenz wurde angelegt.');}catch(err){console.error(err);showPortalMessage('Lizenz konnte nicht gespeichert werden. Bitte Firestore-Regeln prüfen.','error');}
   });
 
