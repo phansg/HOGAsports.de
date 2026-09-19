@@ -1,7 +1,7 @@
 import { app, auth, db } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp, writeBatch } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
-import { getStorage, ref as storageRef, uploadBytesResumable, deleteObject } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
+import { getStorage, ref as storageRef, uploadBytesResumable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 
 const pageRole = document.body.dataset.portalRole;
@@ -20,6 +20,8 @@ const createHogaInvoice = httpsCallable(functions, 'createHogaInvoice');
 const testHogaEmail = httpsCallable(functions, 'testHogaEmail');
 const sendHogaAccessMail = httpsCallable(functions, 'sendHogaAccessMail');
 const sendHogaOrderConfirmation = httpsCallable(functions, 'sendHogaOrderConfirmation');
+const listLicensedDesktopReleases = httpsCallable(functions, 'listLicensedDesktopReleases');
+const getLicensedDesktopDownload = httpsCallable(functions, 'getLicensedDesktopDownload');
 let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [] };
 let currentUserUid = null;
 
@@ -157,8 +159,20 @@ async function loadCustomerPortal(user, profile, role) {
     if (managerLicense) cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet · Webanwendung</span><h3>Vereinsmanager Web</h3><p>Zentrale Vereinsverwaltung für Mitglieder, Beiträge, Rechnungen und Finanzen.</p></div><div class="product-actions"><a class="btn btn-primary" href="vereinsmanager-web.html">Vereinsmanager starten</a><button class="btn btn-secondary" type="button" data-product-copy="vereinsmanager-web.html">Start-Link kopieren</button><button class="btn btn-secondary" type="button" data-product-install="vereinsmanager-web.html">Als Web-App installieren</button></div></article>`);
     if (tournamentLicense) cards.push(`<article class="web-product-card"><div><span class="status status-date">In Vorbereitung · Webanwendung</span><h3>Tournament Web</h3><p>Die Lizenz ist Ihrem Kundenkonto zugeordnet. Der direkte Web-Start wird mit der Tournament-Web-Anwendung freigeschaltet.</p></div><button class="btn btn-secondary" type="button" disabled>Noch nicht verfügbar</button></article>`);
     const desktopLicenses = activeLicenses.filter(l => /desktop|basic/i.test(String(l.productName||l.product||'')) && !/vereinsmanager\s*web/i.test(String(l.productName||l.product||'')));
-    desktopLicenses.forEach(l => cards.push(`<article class="web-product-card"><div><span class="status status-available">Lizenziert · Desktopprogramm</span><h3>${escapeHtml(l.productName||l.product||'HOGAsports Desktop')}</h3><p>${escapeHtml(l.sport||'')} · Die Downloadverwaltung wird vorbereitet. Hier erscheint künftig die aktuelle, für Sie freigegebene Programmversion.</p></div><button class="btn btn-secondary" type="button" disabled>Download folgt</button></article>`));
+    // Die Cloud Function prüft die Lizenz und liefert ausschließlich freigegebene Versionen.
+    let releasedDesktop = [];
+    try { releasedDesktop = (await listLicensedDesktopReleases()).data.releases || []; }
+    catch(e) { console.error('Desktop-Katalog:',e); if(desktopLicenses.length) cards.push('<article class="web-product-card"><p>Desktop-Downloads sind derzeit nicht abrufbar. Bitte versuchen Sie es später erneut.</p></article>'); }
+    releasedDesktop.forEach(p => cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet · Desktopprogramm</span><h3>${escapeHtml(p.name)}</h3><p>${escapeHtml(p.sport)} · ${escapeHtml(p.platform)} · Version ${escapeHtml(p.version)} · ${escapeHtml(p.fileName)}</p></div><button class="btn btn-primary" type="button" data-desktop-download="${escapeHtml(p.productId)}">Programm herunterladen</button></article>`));
+    desktopLicenses.filter(l=>!releasedDesktop.some(p=>p.licenseProduct===l.productName && p.sport===l.sport)).forEach(l=>cards.push(`<article class="web-product-card"><div><span class="status status-date">Lizenziert · Desktopprogramm</span><h3>${escapeHtml(l.productName||l.product||'Desktop Basic')}</h3><p>${escapeHtml(l.sport||'')} · Noch keine Programmversion veröffentlicht.</p></div></article>`));
     webProductList.innerHTML = cards.length ? cards.join('') : '<div class="empty-state"><strong>Keine aktiven Produkte freigeschaltet.</strong><span>Sobald eine aktive Lizenz hinterlegt ist, erscheinen Ihre Produkte hier.</span></div>';
+    webProductList.querySelectorAll('[data-desktop-download]').forEach(btn=>btn.addEventListener('click',async()=>{
+      const original=btn.textContent;btn.disabled=true;btn.textContent='Berechtigung wird geprüft …';
+      try {const result=await getLicensedDesktopDownload({productId:btn.dataset.desktopDownload});
+        const a=document.createElement('a');a.href=result.data.url;a.rel='noopener';a.download=result.data.fileName||'HOGAsports-Programm.zip';document.body.appendChild(a);a.click();a.remove();
+      } catch(e) {console.error(e);showPortalMessage('Download nicht möglich. Bitte Lizenz oder Freigabe prüfen.','error');}
+      finally {btn.disabled=false;btn.textContent=original;}
+    }));
     webProductList.querySelectorAll('[data-product-copy]').forEach(btn => btn.addEventListener('click', async () => {
       const url = new URL(btn.dataset.productCopy, window.location.href).href;
       const label = btn.textContent;
@@ -411,7 +425,13 @@ async function renderDesktopVersions(productId){
   try{
     const snap=await getDocs(collection(db,'desktopProducts',productId,'versions'));
     const versions=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    target.innerHTML=versions.length?`<table class="portal-table"><thead><tr><th>Version</th><th>Datei</th><th>Größe</th><th>Status</th><th>Aktion</th></tr></thead><tbody>${versions.map(v=>`<tr><td>${escapeHtml(v.version)}</td><td>${escapeHtml(v.fileName)}</td><td>${(Number(v.size||0)/1048576).toFixed(1)} MB</td><td>${v.status==='blocked'?'Gesperrt':'Entwurf'}</td><td><button class="table-action" type="button" data-block-version="${escapeHtml(v.id)}">${v.status==='blocked'?'Bereits gesperrt':'Sperren'}</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Programmversion hochgeladen.</div>';
+    target.innerHTML=versions.length?`<table class="portal-table"><thead><tr><th>Version</th><th>Datei</th><th>Größe</th><th>Status</th><th>Aktion</th></tr></thead><tbody>${versions.map(v=>`<tr><td>${escapeHtml(v.version)}</td><td>${escapeHtml(v.fileName)}</td><td>${(Number(v.size||0)/1048576).toFixed(1)} MB</td><td>${v.status==='published'?'Veröffentlicht':v.status==='blocked'?'Gesperrt':'Entwurf'}</td><td><button class="table-action" type="button" data-publish-version="${escapeHtml(v.id)}" ${v.status==='published'?'disabled':''}>${v.status==='published'?'Veröffentlicht':'Veröffentlichen'}</button> <button class="table-action" type="button" data-block-version="${escapeHtml(v.id)}" ${v.status==='blocked'?'disabled':''}>${v.status==='blocked'?'Gesperrt':'Sperren'}</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Programmversion hochgeladen.</div>';
+    target.querySelectorAll('[data-publish-version]').forEach(b=>b.addEventListener('click',async()=>{
+      const v=versions.find(x=>x.id===b.dataset.publishVersion);if(!v||v.status==='published')return;
+      if(!confirm(`Version ${v.version} für lizenzierte Kunden veröffentlichen? Eine bisher veröffentlichte Version dieses Produkts wird dabei zurückgezogen.`))return;
+      try{const publish=httpsCallable(functions,'publishHogaDesktopRelease');await publish({productId,versionId:v.id});await renderDesktopVersions(productId);showPortalMessage('Version veröffentlicht.');}
+      catch(e){console.error(e);showPortalMessage('Veröffentlichung fehlgeschlagen.','error');}
+    }));
     target.querySelectorAll('[data-block-version]').forEach(b=>b.addEventListener('click',async()=>{
       const v=versions.find(x=>x.id===b.dataset.blockVersion);if(!v||v.status==='blocked')return;
       if(!confirm('Diese Version sperren?'))return;
@@ -438,7 +458,7 @@ function initDesktopVersionUpload(){
         task.on('state_changed',snap=>{progress.textContent=`Upload: ${Math.round(100*snap.bytesTransferred/snap.totalBytes)} %`;},reject,resolve);
       });
       try{await setDoc(versionDoc,{version,fileName:file.name,size:file.size,storagePath:path,status:'draft',notes:f.elements.notes.value.trim(),createdAt:serverTimestamp(),updatedAt:serverTimestamp()});}
-      catch(e){await deleteObject(storageRef(desktopStorage,path)).catch(console.error);throw e;}
+      catch(e){console.error('Datei wurde hochgeladen, aber der Firestore-Eintrag fehlt:',path,e);progress.textContent='Datei übertragen, Versionsdaten nicht gespeichert. Bitte Administrator kontaktieren; erneutes Hochladen erzeugt eine neue Datei.';throw e;}
       f.reset();f.elements.productId.value=productId;progress.textContent='Upload abgeschlossen – Version als Entwurf gespeichert.';
       await renderDesktopVersions(productId);showPortalMessage('Programmversion erfolgreich hochgeladen.');
     }catch(e){console.error(e);progress.textContent='Upload fehlgeschlagen. Bitte Storage- und Firestore-Regeln prüfen.';showPortalMessage('Programmversion konnte nicht hochgeladen werden.','error');}
