@@ -25,8 +25,14 @@ const getLicensedDesktopDownload = httpsCallable(functions, 'getLicensedDesktopD
 const deleteHogaLicense = httpsCallable(functions, 'deleteHogaLicense');
 const deleteHogaCustomer = httpsCallable(functions, 'deleteHogaCustomer');
 const updateOwnHogaCustomer = httpsCallable(functions, 'updateOwnHogaCustomer');
+const createOwnHogaPortalUser = httpsCallable(functions, 'createOwnHogaPortalUser');
+const updateOwnHogaPortalUser = httpsCallable(functions, 'updateOwnHogaPortalUser');
+const deleteOwnHogaPortalUser = httpsCallable(functions, 'deleteOwnHogaPortalUser');
+const sendOwnHogaPortalAccessMail = httpsCallable(functions, 'sendOwnHogaPortalAccessMail');
+
 let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [], catalogProducts: [] };
 let currentUserUid = null;
+let portalMembers=[];
 // Versionierter, im Quellcode gepflegter Katalog: Neue Web-/Court-Anwendungen hier bei Integration ergänzen.
 // Keine automatische Kundenzuweisung; nur tatsächlich integrierte Anwendungen aufführen.
 const HOGA_WEB_APPS = Object.freeze([
@@ -42,11 +48,11 @@ function licenseIsCurrent(l){const day=new Date().toISOString().slice(0,10);retu
 
 function roleAllowed(role) {
   if (pageRole === 'admin') return role === 'admin';
-  if (pageRole === 'customer') return role === 'customer_admin';
+  if (pageRole === 'customer') return ['customer_admin','customer'].includes(role);
   return false;
 }
 function roleLabel(role) {
-  return role === 'admin' ? 'Administrator' : role === 'customer_admin' ? 'Kunden-Administrator' : role === 'tournament_manager' ? 'Turnierleiter' : 'Kunde';
+  return role === 'admin' ? 'Administrator' : role === 'customer_admin' ? 'Hauptadministrator' : role === 'tournament_manager' ? 'Turnierleiter' : 'Kunde';
 }
 function escapeHtml(value='') { const d=document.createElement('div'); d.textContent=String(value); return d.innerHTML; }
 function dateText(value) {
@@ -140,6 +146,40 @@ document.querySelectorAll('[data-jump-tab]').forEach(button => {
   button.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(button.dataset.jumpTab); } });
 });
 
+function renderPortalMembers(){
+  const list=document.querySelector('#memberList');if(!list)return;
+  setText('[data-member-count]',String(portalMembers.length));
+  list.innerHTML=portalMembers.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Zugang</th><th>Status</th><th>Aktionen</th></tr></thead><tbody>${portalMembers.map(m=>{const main=m.role==='customer_admin';return `<tr><td>${escapeHtml(m.displayName||'–')}</td><td>${escapeHtml(m.email||'–')}</td><td>${main?'Hauptadministrator':'Portalbenutzer'}</td><td>${m.active===false?'Gesperrt':'Aktiv'}</td><td>${main?'<small>Nur durch HOGAsports änderbar</small>':`<button class="btn btn-secondary btn-small" type="button" data-portal-edit="${escapeHtml(m.id)}">Bearbeiten</button> <button class="btn btn-secondary btn-small" type="button" data-portal-invite="${escapeHtml(m.id)}" ${m.active===false?'disabled':''}>Zugangslink</button> <button class="btn btn-secondary btn-small" type="button" data-portal-delete="${escapeHtml(m.id)}">Löschen</button>`}</td></tr>`}).join('')}</tbody></table>`:'<div class="empty-state">Keine Portalbenutzer gefunden.</div>';
+}
+function initPortalUserForm(){
+  const form=document.querySelector('#portalUserForm');if(!form)return;
+  const reset=()=>{form.reset();form.elements.uid.value='';form.hidden=true;};
+  document.querySelector('#portalUserAdd')?.addEventListener('click',()=>{reset();form.hidden=false;form.elements.displayName.focus();});
+  document.querySelector('#portalUserCancel')?.addEventListener('click',reset);
+  document.querySelector('#memberList')?.addEventListener('click',async e=>{
+    const btn=e.target.closest('button');if(!btn)return;
+    const uid=btn.dataset.portalEdit||btn.dataset.portalInvite||btn.dataset.portalDelete;
+    const member=portalMembers.find(m=>m.id===uid&&m.role==='customer');if(!member)return;
+    if(btn.dataset.portalEdit){form.elements.uid.value=uid;form.elements.displayName.value=member.displayName||'';form.elements.email.value=member.email||'';form.elements.active.checked=member.active!==false;form.hidden=false;form.elements.displayName.focus();return;}
+    if(btn.dataset.portalDelete&&!window.confirm(`Portalzugang von ${member.displayName||member.email} endgültig löschen?`))return;
+    btn.disabled=true;
+    try {if(btn.dataset.portalInvite){await sendOwnHogaPortalAccessMail({uid});showPortalMessage('Zugangslink wurde versendet.');}
+      else {await deleteOwnHogaPortalUser({uid});portalMembers=portalMembers.filter(m=>m.id!==uid);renderPortalMembers();showPortalMessage('Portalzugang gelöscht.');}}
+    catch(err){console.error(err);showPortalMessage(err.message||'Aktion fehlgeschlagen.','error');}
+    finally{if(btn.isConnected)btn.disabled=false;}
+  });
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();const uid=form.elements.uid.value;
+    const payload={displayName:form.elements.displayName.value.trim(),email:form.elements.email.value.trim(),active:form.elements.active.checked};
+    const submit=form.querySelector('[type="submit"]');submit.disabled=true;
+    try {if(uid){await updateOwnHogaPortalUser({uid,...payload});portalMembers=portalMembers.map(m=>m.id===uid?{...m,...payload}:m);showPortalMessage('Benutzer gespeichert.');}
+      else {const result=await createOwnHogaPortalUser(payload);portalMembers.push({id:result.data.uid,...payload,role:'customer'});showPortalMessage('Benutzer angelegt. Über „Zugangslink“ können Sie die Einladung versenden.');}
+      reset();renderPortalMembers();}
+    catch(err){console.error(err);showPortalMessage(err.message||'Benutzer konnte nicht gespeichert werden.','error');}
+    finally{submit.disabled=false;}
+  });
+}
+
 async function loadCustomerPortal(user, profile, role) {
   const customerId = profile.customerId;
   if (!customerId) { showPortalMessage('Dieser Zugang ist noch keinem Kunden zugeordnet. Bitte wenden Sie sich an HOGAsports.'); return; }
@@ -155,6 +195,7 @@ async function loadCustomerPortal(user, profile, role) {
   ]);
   const licenses = licenseSnap.docs.map(d=>({id:d.id,...d.data()}));
   const members = memberSnap.docs.map(d=>({id:d.id,...d.data()}));
+  portalMembers=members.filter(m=>['customer_admin','customer'].includes(m.role));
   const invoices = invoiceSnap.docs.map(d=>({id:d.id,...d.data()}));
   const activeCount = licenses.filter(x => ['active','aktiv'].includes(String(x.status||'').toLowerCase())).length;
   setText('[data-license-count]',activeCount); setText('[data-member-count]',members.length); setText('[data-invoice-count]',invoices.length);
@@ -162,9 +203,7 @@ async function loadCustomerPortal(user, profile, role) {
   const licenseList=document.querySelector('#licenseList');
   if (licenseList) licenseList.innerHTML = licenses.length ? licenses.sort((a,b)=>String(a.productName||'').localeCompare(String(b.productName||''))).map(l=>`<article class="license-card"><div><span class="status ${statusClass(l.status)}">${escapeHtml(l.statusLabel||statusLabel(l.status))}</span><h3>${escapeHtml(l.programName||l.productName||l.product||'HOGAsports Lizenz')}</h3><p>${escapeHtml(l.sport||'Sportart noch nicht hinterlegt')}</p></div><dl><div><dt>Lizenznummer</dt><dd>${escapeHtml(l.licenseNumber||'–')}</dd></div><div><dt>Beginn</dt><dd>${dateText(l.startDate)}</dd></div><div><dt>Ende</dt><dd>${dateText(l.endDate)}</dd></div></dl></article>`).join('') : '<div class="empty-state"><strong>Noch keine Lizenz hinterlegt.</strong><span>Gebuchte HOGAsports-Produkte erscheinen später automatisch hier.</span></div>';
 
-  const memberList=document.querySelector('#memberList');
-  if (memberList) memberList.innerHTML = members.length ? `<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th></tr></thead><tbody>${members.map(m=>`<tr><td>${escapeHtml(m.displayName||m.name||'–')}</td><td>${escapeHtml(m.email||'–')}</td><td>${escapeHtml(roleLabel(String(m.role||'customer').toLowerCase()))}</td><td><span class="status ${m.active===false?'status-dev':'status-available'}">${m.active===false?'Gesperrt':'Aktiv'}</span></td></tr>`).join('')}</tbody></table>` : '<div class="empty-state">Keine Benutzer gefunden.</div>';
-  const hint=document.querySelector('[data-user-admin-hint]'); if(hint) hint.textContent = role==='customer_admin' ? 'Verwaltung wird vorbereitet' : 'Nur Ansicht';
+  renderPortalMembers();
 
   const webProductList=document.querySelector('#webProductList');
   if (webProductList) {
@@ -688,7 +727,7 @@ onAuthStateChanged(auth, async (user) => {
     if(data.active===false || !roleAllowed(role)){ await signOut(auth); window.location.replace('login.html'); return; }
     const displayName=data.displayName||data.name||user.email?.split('@')[0]||'Benutzer';
     nameEls.forEach(el=>el.textContent=displayName); emailEls.forEach(el=>el.textContent=user.email||data.email||''); roleEls.forEach(el=>el.textContent=roleLabel(role));
-    if(pageRole==='customer') await loadCustomerPortal(user,data,role);
+    if(pageRole==='customer'){initPortalUserForm();await loadCustomerPortal(user,data,role);}
     if(pageRole==='admin'){currentUserUid=user.uid;initAdminForms();await loadAdminPortal();}
     if(loading) loading.hidden=true; if(content) content.hidden=false;
   } catch(error){ console.error(error); await signOut(auth); window.location.replace('login.html'); }
