@@ -1,4 +1,4 @@
-import { auth, db } from './firebase-config.js';
+import { auth, db, kundenportalFirebase } from './firebase-config.js';
 import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -13,6 +13,14 @@ const passwordInput = document.querySelector('#password');
 const message = document.querySelector('#authMessage');
 const submitBtn = document.querySelector('#loginSubmit');
 const resetBtn = document.querySelector('#resetPassword');
+const loginArea = document.querySelector('#loginArea');
+const requestedArea = new URLSearchParams(window.location.search).get('app');
+if (loginArea && ['admin','customer'].includes(requestedArea)) loginArea.value=requestedArea;
+
+function selectedArea(){ return loginArea?.value==='admin'?'admin':'customer'; }
+function selectedAuth(){ return selectedArea()==='customer'?kundenportalFirebase.auth:auth; }
+function selectedDb(){ return selectedArea()==='customer'?kundenportalFirebase.db:db; }
+function profileCollection(){ return selectedArea()==='customer'?'portalUsers':'users'; }
 
 function showMessage(text, type = 'error') {
   if (!message) return;
@@ -28,33 +36,34 @@ function setBusy(busy) {
 }
 
 async function routeUser(user) {
-  const ref = doc(db, 'users', user.uid);
+  const area=selectedArea();
+  const ref = doc(selectedDb(), profileCollection(), user.uid);
   const snap = await getDoc(ref);
 
   if (!snap.exists()) {
-    await signOut(auth);
+    await signOut(selectedAuth());
     showMessage(`Für diesen Zugang ist noch keine HOGAsports-Rolle hinterlegt. UID: ${user.uid}`);
     return;
   }
 
   const data = snap.data();
   if (data.active === false) {
-    await signOut(auth);
+    await signOut(selectedAuth());
     showMessage('Dieser Zugang ist derzeit deaktiviert. Bitte wenden Sie sich an HOGAsports.');
     return;
   }
 
   const role = String(data.role || '').toLowerCase();
-  if (role === 'admin') {
+  if (area==='admin' && role === 'admin') {
     window.location.replace('admin.html');
     return;
   }
-  if (role === 'customer_admin' || role === 'tournament_manager' || role === 'customer') {
+  if (area==='customer' && (role === 'customer_admin' || role === 'customer')) {
     window.location.replace('kunde.html');
     return;
   }
 
-  await signOut(auth);
+  await signOut(selectedAuth());
   showMessage('Für diesen Zugang ist keine gültige Rolle hinterlegt.');
 }
 
@@ -64,7 +73,7 @@ if (form) {
     message.hidden = true;
     setBusy(true);
     try {
-      const credential = await signInWithEmailAndPassword(auth, emailInput.value.trim(), passwordInput.value);
+      const credential = await signInWithEmailAndPassword(selectedAuth(), emailInput.value.trim(), passwordInput.value);
       await routeUser(credential.user);
     } catch (error) {
       console.error(error);
@@ -90,7 +99,7 @@ if (resetBtn) {
       return;
     }
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(selectedAuth(), email);
       showMessage('Die E-Mail zum Zurücksetzen des Passworts wurde versendet.', 'success');
     } catch (error) {
       console.error(error);
@@ -99,8 +108,12 @@ if (resetBtn) {
   });
 }
 
-onAuthStateChanged(auth, async (user) => {
-  if (user && !form?.dataset.submitting) {
-    try { await routeUser(user); } catch (error) { console.error(error); }
-  }
-});
+function observeSelectedArea(){
+  return onAuthStateChanged(selectedAuth(), async user=>{
+    if (user && !form?.dataset.submitting) {
+      try { await routeUser(user); } catch (error) { console.error(error); }
+    }
+  });
+}
+let stopObserver=observeSelectedArea();
+loginArea?.addEventListener('change',()=>{stopObserver?.();stopObserver=observeSelectedArea();if(message)message.hidden=true;});

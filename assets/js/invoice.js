@@ -1,7 +1,9 @@
-import { auth, db } from './firebase-config.js';
+import { auth as rootAuth, db as rootDb, kundenportalFirebase } from './firebase-config.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 const loading=document.querySelector('#invoiceLoading'),errorBox=document.querySelector('#invoiceError'),sheet=document.querySelector('#invoiceSheet'),actions=document.querySelector('#invoiceActions');
+const isCustomerPortal=new URLSearchParams(location.search).get('app')==='customer';
+const auth=isCustomerPortal?kundenportalFirebase.auth:rootAuth,db=isCustomerPortal?kundenportalFirebase.db:rootDb;
 const esc=(v='')=>{const d=document.createElement('div');d.textContent=String(v??'');return d.innerHTML;};
 const money=v=>new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR'}).format(Number(v||0));
 const date=v=>{if(!v)return '–';const d=new Date(String(v).slice(0,10)+'T12:00:00');return Number.isNaN(d.getTime())?'–':new Intl.DateTimeFormat('de-DE').format(d);};
@@ -17,4 +19,4 @@ ${!taxStandard&&s.taxNote?`<p class="portal-note compact">${esc(s.taxNote)}</p>`
 <div class="invoice-footer">${esc(s.invoiceFooter||'')}${s.taxNumber?`\nSteuernummer: ${esc(s.taxNumber)}`:''}${s.vatId?` · USt-IdNr.: ${esc(s.vatId)}`:''}${s.website?`\n${esc(s.website)}`:''}</div>`;
 loading.hidden=true;sheet.hidden=false;actions.hidden=false;}
 document.querySelector('#printInvoice')?.addEventListener('click',()=>window.print());
-onAuthStateChanged(auth,async user=>{if(!user){window.location.replace('login.html');return;}const id=new URLSearchParams(location.search).get('id');if(!id){fail('Keine Rechnung ausgewählt.');return;}try{const snap=await getDoc(doc(db,'invoices',id));if(!snap.exists()){fail('Rechnung wurde nicht gefunden.');return;}render({id:snap.id,...snap.data()});}catch(e){console.error(e);fail('Diese Rechnung kann mit diesem Zugang nicht geöffnet werden.');}});
+onAuthStateChanged(auth,async user=>{if(!user){window.location.replace(`login.html?app=${isCustomerPortal?'customer':'admin'}`);return;}const id=new URLSearchParams(location.search).get('id');if(!id){fail('Keine Rechnung ausgewählt.');return;}try{const snap=await getDoc(doc(db,'invoices',id));if(!snap.exists()){fail('Rechnung wurde nicht gefunden.');return;}render({id:snap.id,...snap.data()});}catch(e){console.error(e);fail('Diese Rechnung kann mit diesem Zugang nicht geöffnet werden.');}});

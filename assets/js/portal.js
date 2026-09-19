@@ -1,17 +1,20 @@
-import { app, auth, db } from './firebase-config.js';
+import { app, auth as rootAuth, db as rootDb, kundenportalFirebase } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp, writeBatch } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { getStorage, ref as storageRef, uploadBytesResumable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 
 const pageRole = document.body.dataset.portalRole;
+const auth=pageRole==='customer'?kundenportalFirebase.auth:rootAuth;
+const db=pageRole==='customer'?kundenportalFirebase.db:rootDb;
+const profileCollection=pageRole==='customer'?'portalUsers':'users';
 const loading = document.querySelector('#portalLoading');
 const content = document.querySelector('#portalContent');
 const nameEls = document.querySelectorAll('[data-user-name]');
 const emailEls = document.querySelectorAll('[data-user-email]');
 const roleEls = document.querySelectorAll('[data-user-role]');
 const logoutButtons = document.querySelectorAll('[data-logout]');
-const functions = getFunctions(app, 'europe-west1');
+const functions = getFunctions(pageRole==='customer'?kundenportalFirebase.app:app, 'europe-west1');
 const desktopStorage = getStorage(app);
 const createHogaUser = httpsCallable(functions, 'createHogaUser');
 const updateHogaUser = httpsCallable(functions, 'updateHogaUser');
@@ -29,6 +32,7 @@ const createOwnHogaPortalUser = httpsCallable(functions, 'createOwnHogaPortalUse
 const updateOwnHogaPortalUser = httpsCallable(functions, 'updateOwnHogaPortalUser');
 const deleteOwnHogaPortalUser = httpsCallable(functions, 'deleteOwnHogaPortalUser');
 const sendOwnHogaPortalAccessMail = httpsCallable(functions, 'sendOwnHogaPortalAccessMail');
+const migrateHogaPortalUser = httpsCallable(functions, 'migrateHogaPortalUser');
 
 let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [], catalogProducts: [] };
 let currentUserUid = null;
@@ -134,7 +138,7 @@ function exportInvoicesCsv(){
   downloadCsv(`HOGAsports_Rechnungen_${year}.csv`,rows);
 }
 
-logoutButtons.forEach(btn => btn.addEventListener('click', async () => { await signOut(auth); window.location.replace('login.html'); }));
+logoutButtons.forEach(btn => btn.addEventListener('click', async () => { await signOut(auth); window.location.replace(`login.html?app=${pageRole==='customer'?'customer':'admin'}`); }));
 
 function activateTab(tabName){
   document.querySelectorAll('[data-portal-tab]').forEach(b=>b.classList.toggle('active',b.dataset.portalTab===tabName));
@@ -190,7 +194,7 @@ async function loadCustomerPortal(user, profile, role) {
 
   const [licenseSnap, memberSnap, invoiceSnap] = await Promise.all([
     getDocs(query(collection(db,'licenses'), where('customerId','==',customerId))),
-    getDocs(query(collection(db,'users'), where('customerId','==',customerId))),
+    getDocs(query(collection(db,'portalUsers'), where('customerId','==',customerId))),
     getDocs(query(collection(db,'invoices'), where('customerId','==',customerId)))
   ]);
   const licenses = licenseSnap.docs.map(d=>({id:d.id,...d.data()}));
@@ -259,7 +263,7 @@ async function loadCustomerPortal(user, profile, role) {
 
   const invoiceList=document.querySelector('#invoiceList');
   invoices.sort((a,b)=>String(b.invoiceDate||'').localeCompare(String(a.invoiceDate||'')));
-  if (invoiceList) invoiceList.innerHTML = invoices.length ? `<table class="portal-table"><thead><tr><th>Rechnung</th><th>Datum</th><th>Betrag</th><th>Status</th><th></th></tr></thead><tbody>${invoices.map(i=>`<tr><td>${escapeHtml(i.invoiceNumber||i.id)}</td><td>${dateText(i.invoiceDate)}</td><td>${money(i.totalAmount??i.amount)}</td><td><span class="status ${statusClass(i.paymentStatus||i.status)}">${escapeHtml(i.paymentStatusLabel||i.paymentStatus||i.status||'Offen')}</span></td><td><a class="text-link" href="rechnung.html?id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">Rechnung öffnen</a></td></tr>`).join('')}</tbody></table>` : '<div class="empty-state"><strong>Noch keine Rechnung vorhanden.</strong><span>Rechnungen werden nach einer Buchung hier bereitgestellt.</span></div>';
+  if (invoiceList) invoiceList.innerHTML = invoices.length ? `<table class="portal-table"><thead><tr><th>Rechnung</th><th>Datum</th><th>Betrag</th><th>Status</th><th></th></tr></thead><tbody>${invoices.map(i=>`<tr><td>${escapeHtml(i.invoiceNumber||i.id)}</td><td>${dateText(i.invoiceDate)}</td><td>${money(i.totalAmount??i.amount)}</td><td><span class="status ${statusClass(i.paymentStatus||i.status)}">${escapeHtml(i.paymentStatusLabel||i.paymentStatus||i.status||'Offen')}</span></td><td><a class="text-link" href="rechnung.html?app=customer&amp;id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">Rechnung öffnen</a></td></tr>`).join('')}</tbody></table>` : '<div class="empty-state"><strong>Noch keine Rechnung vorhanden.</strong><span>Rechnungen werden nach einer Buchung hier bereitgestellt.</span></div>';
 }
 
 function initCustomerSelfData(customer) {
@@ -320,11 +324,13 @@ async function removeCustomer(id){
 function renderAdminUsers(){
   const target=document.querySelector('#adminUserList'); if(!target) return;
   const rows=[...adminData.users].sort((a,b)=>String(a.displayName||a.email||'').localeCompare(String(b.displayName||b.email||''),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>`<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid?'<span class="admin-subline">Aktuell angemeldet</span>':''}</td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${u.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${u.id}">Zugangslink</button><button class="table-action danger" type="button" data-delete-user="${u.id}" ${u.id===currentUserUid?'disabled title="Eigener Zugang kann nicht gelöscht werden"':''}>Zugang löschen</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>{const key=`${u.authArea}|${u.id}`;return `<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid&&u.authArea==='root'?'<span class="admin-subline">Aktuell angemeldet</span>':''}<span class="admin-subline">${u.authArea==='customerTenant'?'Kundenportal-Mandant':'Bisheriger Auth-Bereich'}</span></td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${key}">Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${key}">Zugangslink</button>${u.authArea==='root'&&['customer_admin','customer'].includes(u.role)?`<button class="table-action secondary" type="button" data-migrate-user="${u.id}">In Kundenportal übernehmen</button>`:''}<button class="table-action danger" type="button" data-delete-user="${key}" ${u.id===currentUserUid&&u.authArea==='root'?'disabled title="Eigener Zugang kann nicht gelöscht werden"':''}>Zugang löschen</button></td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
   target.querySelectorAll('[data-edit-user]').forEach(btn=>btn.addEventListener('click',()=>fillUserForm(btn.dataset.editUser)));
   target.querySelectorAll('[data-reset-user]').forEach(btn=>btn.addEventListener('click',()=>sendResetForUser(btn.dataset.resetUser)));
   target.querySelectorAll('[data-delete-user]').forEach(btn=>btn.addEventListener('click',()=>deleteUserAccess(btn.dataset.deleteUser)));
+  target.querySelectorAll('[data-migrate-user]').forEach(btn=>btn.addEventListener('click',()=>migratePortalAccess(btn.dataset.migrateUser)));
 }
+function managedUser(key){const [authArea,id]=String(key||'').split('|');return {authArea,id,user:adminData.users.find(x=>x.id===id&&x.authArea===authArea)};}
 function customerOptions(){
   return '<option value="">Bitte auswählen</option>'+[...adminData.customers].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'de')).map(c=>`<option value="${c.id}">${escapeHtml(c.name||c.id)}</option>`).join('');
 }
@@ -357,27 +363,34 @@ function syncUserCustomerRequirement(){
   f.elements.customerId.required=!isAdmin;
   if(isAdmin) f.elements.customerId.value='';
 }
-function fillUserForm(id){
-  const u=adminData.users.find(x=>x.id===id); const f=document.querySelector('#userForm'); if(!u||!f)return;
+function fillUserForm(key){
+  const {id,authArea,user:u}=managedUser(key); const f=document.querySelector('#userForm'); if(!u||!f)return;
+  let areaInput=f.elements.authArea;if(!areaInput){areaInput=document.createElement('input');areaInput.type='hidden';areaInput.name='authArea';f.append(areaInput);}
+  areaInput.value=authArea;
   f.elements.uid.value=id; f.elements.displayName.value=u.displayName||u.name||''; f.elements.email.value=u.email||''; f.elements.role.value=u.role||'customer'; f.elements.customerId.value=u.customerId||''; f.elements.active.value=String(u.active!==false); f.elements.sendInvite.value='false';
   syncUserCustomerRequirement(); openForm('userForm');
 }
-async function deleteUserAccess(id){
-  const u=adminData.users.find(x=>x.id===id);
+async function deleteUserAccess(key){
+  const {id,authArea,user:u}=managedUser(key);
   if(!u) return;
-  if(id===currentUserUid){showPortalMessage('Der aktuell angemeldete Administrator kann den eigenen Zugang nicht löschen.','error');return;}
-  const sameCustomer=u.customerId?adminData.users.filter(x=>x.id!==id&&x.customerId===u.customerId&&x.active!==false):[];
+  if(authArea==='root'&&id===currentUserUid){showPortalMessage('Der aktuell angemeldete Administrator kann den eigenen Zugang nicht löschen.','error');return;}
+  const sameCustomer=u.customerId?adminData.users.filter(x=>!(x.id===id&&x.authArea===authArea)&&x.authArea===authArea&&x.customerId===u.customerId&&x.active!==false):[];
   const lastHint=u.customerId&&sameCustomer.length===0?'\n\nACHTUNG: Dies ist der letzte aktive Zugang dieses Kunden. Der Kunde kann sich danach nicht mehr im Kundenportal anmelden.':'';
   const ok=window.confirm(`Zugang wirklich vollständig löschen?\n\n${u.displayName||u.email||'Benutzer'} (${u.email||'ohne E-Mail'})\n\nDabei werden der Firebase-Login und das HOGAsports-Benutzerprofil gelöscht.${lastHint}\n\nDiese Aktion kann nicht rückgängig gemacht werden.`);
   if(!ok)return;
-  try{await deleteHogaUser({uid:id});await loadAdminPortal();showPortalMessage('Der Zugang wurde vollständig gelöscht.');}
+  try{await deleteHogaUser({uid:id,authArea});await loadAdminPortal();showPortalMessage('Der Zugang wurde vollständig gelöscht.');}
   catch(err){console.error(err);const msg=String(err?.message||'');showPortalMessage(msg.includes('failed-precondition')?'Dieser Zugang kann nicht gelöscht werden.':msg.includes('permission-denied')?'Keine Berechtigung zum Löschen des Zugangs.':'Der Zugang konnte nicht vollständig gelöscht werden.','error');}
 }
 
-async function sendResetForUser(id){
-  const u=adminData.users.find(x=>x.id===id); if(!u?.email){showPortalMessage('Für diesen Zugang ist keine E-Mail-Adresse hinterlegt.','error');return;}
+async function sendResetForUser(key){
+  const {id,authArea,user:u}=managedUser(key); if(!u?.email){showPortalMessage('Für diesen Zugang ist keine E-Mail-Adresse hinterlegt.','error');return;}
   if(u.active===false){showPortalMessage('Der Zugang ist gesperrt. Bitte zuerst aktivieren.','error');return;}
-  try{await sendHogaAccessMail({uid:id});showPortalMessage(`HOGAsports-Zugangslink wurde von service@hogasports.de an ${u.email} versendet.`);}catch(err){console.error(err);const msg=String(err?.message||'');showPortalMessage(msg.includes('not-found')?'Der Firebase-Zugang wurde nicht gefunden. Bitte den Benutzer prüfen oder neu anlegen.':msg.includes('failed-precondition')?'Der Zugang ist gesperrt oder besitzt keine gültige E-Mail-Adresse.':'Der HOGAsports-Zugangslink konnte nicht versendet werden. Bitte Function und E-Mail-Versand prüfen.','error');}
+  try{await sendHogaAccessMail({uid:id,authArea});showPortalMessage(`HOGAsports-Zugangslink wurde von service@hogasports.de an ${u.email} versendet.`);}catch(err){console.error(err);const msg=String(err?.message||'');showPortalMessage(msg.includes('not-found')?'Der Firebase-Zugang wurde nicht gefunden. Bitte den Benutzer prüfen oder neu anlegen.':msg.includes('failed-precondition')?'Der Zugang ist gesperrt oder besitzt keine gültige E-Mail-Adresse.':'Der HOGAsports-Zugangslink konnte nicht versendet werden. Bitte Function und E-Mail-Versand prüfen.','error');}
+}
+async function migratePortalAccess(id){
+  const u=adminData.users.find(x=>x.id===id&&x.authArea==='root');if(!u)return;
+  if(!window.confirm(`Den bisherigen Kundenportal-Zugang von ${u.email} kontrolliert in den neuen Kundenportal-Mandanten übernehmen?\n\nDer alte Zugang wird nicht gelöscht. Anschließend muss ein neuer Zugangslink versendet werden.`))return;
+  try{const result=await migrateHogaPortalUser({sourceUid:id});await loadAdminPortal();showPortalMessage(`Mandantenzugang für ${result.data.email} angelegt. Bitte jetzt beim Eintrag „Kundenportal-Mandant“ den Zugangslink versenden.`);}catch(err){console.error(err);showPortalMessage(err?.message||'Die kontrollierte Übernahme ist fehlgeschlagen.','error');}
 }
 
 
@@ -608,12 +621,12 @@ function renderWebCatalog(){
 function initWebCatalog(){} // Web-/Court-Programme werden ausschließlich im Quellcode registriert.
 
 async function loadAdminPortal(){
-  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, interestsSnap, ordersSnap, settingsSnap, desktopSnap, catalogSnap]=await Promise.all([
-    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDocs(collection(db,'orders')), getDoc(doc(db,'settings','invoice')), getDocs(collection(db,'desktopProducts')), getDocs(collection(db,'productCatalog'))
+  const [customersSnap, licensesSnap, usersSnap, portalUsersSnap, invoicesSnap, interestsSnap, ordersSnap, settingsSnap, desktopSnap, catalogSnap]=await Promise.all([
+    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'portalUsers')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDocs(collection(db,'orders')), getDoc(doc(db,'settings','invoice')), getDocs(collection(db,'desktopProducts')), getDocs(collection(db,'productCatalog'))
   ]);
   adminData.customers=customersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.licenses=licensesSnap.docs.map(d=>({id:d.id,...d.data()}));
-  adminData.users=usersSnap.docs.map(d=>({id:d.id,...d.data()}));
+  adminData.users=[...usersSnap.docs.map(d=>({id:d.id,...d.data(),authArea:'root'})),...portalUsersSnap.docs.map(d=>({id:d.id,...d.data(),authArea:'customerTenant'}))];
   adminData.invoices=invoicesSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.interests=interestsSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.orders=ordersSnap.docs.map(d=>({id:d.id,...d.data()}));
@@ -655,14 +668,14 @@ function initAdminForms(){
   userForm?.elements.role.addEventListener('change',syncUserCustomerRequirement);
   userForm?.addEventListener('submit',async e=>{
     e.preventDefault(); const fd=new FormData(userForm); const uid=String(fd.get('uid')||'');
-    const payload={uid,displayName:String(fd.get('displayName')||'').trim(),email:String(fd.get('email')||'').trim(),role:String(fd.get('role')||''),customerId:String(fd.get('customerId')||''),active:String(fd.get('active'))==='true'};
+    const payload={uid,authArea:String(fd.get('authArea')||''),displayName:String(fd.get('displayName')||'').trim(),email:String(fd.get('email')||'').trim(),role:String(fd.get('role')||''),customerId:String(fd.get('customerId')||''),active:String(fd.get('active'))==='true'};
     const wantsInvite=String(fd.get('sendInvite'))==='true';
     if(payload.role!=='admin'&&!payload.customerId){showPortalMessage('Bitte einen Kunden/Verein auswählen.','error');return;}
     if(wantsInvite&&!payload.active){showPortalMessage('Ein HOGAsports-Zugangslink kann nur für einen aktiven Zugang versendet werden.','error');return;}
     const submit=userForm.querySelector('[type="submit"]'); const oldText=submit?.textContent; if(submit){submit.disabled=true;submit.textContent='Bitte warten …';}
     try{
       let targetUid=uid; if(uid){await updateHogaUser(payload);}else{const created=await createHogaUser(payload);targetUid=created.data.uid;}
-      if(wantsInvite&&targetUid) await sendHogaAccessMail({uid:targetUid});
+      if(wantsInvite&&targetUid) await sendHogaAccessMail({uid:targetUid,authArea:uid?payload.authArea:(['customer_admin','customer'].includes(payload.role)?'customerTenant':'root')});
       resetForm('userForm'); await loadAdminPortal();
       showPortalMessage(uid?(wantsInvite?'Benutzer wurde aktualisiert und der HOGAsports-Zugangslink versendet.':'Benutzer wurde aktualisiert.'):(wantsInvite?'Benutzer wurde angelegt und der HOGAsports-Zugangslink versendet.':'Benutzer wurde angelegt.'));
     }catch(err){console.error(err);const msg=err?.message||'';showPortalMessage(msg.includes('already-exists')?'Für diese E-Mail-Adresse besteht bereits ein HOGAsports-Zugang. Bitte verwenden Sie den vorhandenen Benutzer oder löschen Sie diesen zunächst vollständig.':msg.includes('permission-denied')?'Keine Berechtigung für diese Aktion.':msg.includes('not-found')?'Der ausgewählte Datensatz wurde nicht gefunden.':'Benutzer konnte nicht gespeichert werden. Bitte prüfen, ob die Firebase Function bereitgestellt wurde.','error');}
@@ -720,15 +733,15 @@ function initAdminForms(){
 }
 
 onAuthStateChanged(auth, async (user) => {
-  if (!user) { window.location.replace('login.html'); return; }
+  if (!user) { window.location.replace(`login.html?app=${pageRole==='customer'?'customer':'admin'}`); return; }
   try {
-    const snap=await getDoc(doc(db,'users',user.uid)); if(!snap.exists()) throw new Error('Kein Benutzerprofil');
+    const snap=await getDoc(doc(db,profileCollection,user.uid)); if(!snap.exists()) throw new Error('Kein Benutzerprofil');
     const data=snap.data(); const role=String(data.role||'').toLowerCase();
-    if(data.active===false || !roleAllowed(role)){ await signOut(auth); window.location.replace('login.html'); return; }
+    if(data.active===false || !roleAllowed(role)){ await signOut(auth); window.location.replace(`login.html?app=${pageRole==='customer'?'customer':'admin'}`); return; }
     const displayName=data.displayName||data.name||user.email?.split('@')[0]||'Benutzer';
     nameEls.forEach(el=>el.textContent=displayName); emailEls.forEach(el=>el.textContent=user.email||data.email||''); roleEls.forEach(el=>el.textContent=roleLabel(role));
     if(pageRole==='customer'){initPortalUserForm();await loadCustomerPortal(user,data,role);}
     if(pageRole==='admin'){currentUserUid=user.uid;initAdminForms();await loadAdminPortal();}
     if(loading) loading.hidden=true; if(content) content.hidden=false;
-  } catch(error){ console.error(error); await signOut(auth); window.location.replace('login.html'); }
+  } catch(error){ console.error(error); await signOut(auth); window.location.replace(`login.html?app=${pageRole==='customer'?'customer':'admin'}`); }
 });
