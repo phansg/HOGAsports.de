@@ -1,6 +1,7 @@
 import { app, auth, db } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp, writeBatch } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { getStorage, ref as storageRef, uploadBytesResumable, deleteObject } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 
 const pageRole = document.body.dataset.portalRole;
@@ -11,6 +12,7 @@ const emailEls = document.querySelectorAll('[data-user-email]');
 const roleEls = document.querySelectorAll('[data-user-role]');
 const logoutButtons = document.querySelectorAll('[data-logout]');
 const functions = getFunctions(app, 'europe-west1');
+const desktopStorage = getStorage(app);
 const createHogaUser = httpsCallable(functions, 'createHogaUser');
 const updateHogaUser = httpsCallable(functions, 'updateHogaUser');
 const deleteHogaUser = httpsCallable(functions, 'deleteHogaUser');
@@ -387,13 +389,61 @@ function closeOrderForm(){const f=document.querySelector('#orderConfirmationForm
 function renderDesktopProducts(){
   const target=document.querySelector('#desktopProductList');if(!target)return;
   const products=adminData.desktopProducts;
-  target.innerHTML=products.length?`<table class="portal-table"><thead><tr><th>Programm</th><th>Sportart</th><th>System</th><th>Version</th><th>Status</th><th>Lizenzbezug</th><th></th></tr></thead><tbody>${products.map(p=>`<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.sport)}</td><td>${escapeHtml(p.platform)}</td><td>${escapeHtml(p.version||'–')}</td><td>${p.releaseStatus==='blocked'?'Gesperrt':'Entwurf'}</td><td>${escapeHtml(p.licenseProduct||'')} · ${escapeHtml(p.sport||'')}</td><td><button class="table-action" type="button" data-edit-desktop="${escapeHtml(p.id)}">Bearbeiten</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Desktopprogramme angelegt.</div>';
+  target.innerHTML=products.length?`<table class="portal-table"><thead><tr><th>Programm</th><th>Sportart</th><th>System</th><th>Version</th><th>Status</th><th>Lizenzbezug</th><th></th></tr></thead><tbody>${products.map(p=>`<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.sport)}</td><td>${escapeHtml(p.platform)}</td><td>${escapeHtml(p.version||'–')}</td><td>${p.releaseStatus==='blocked'?'Gesperrt':'Entwurf'}</td><td>${escapeHtml(p.licenseProduct||'')} · ${escapeHtml(p.sport||'')}</td><td><button class="table-action" type="button" data-edit-desktop="${escapeHtml(p.id)}">Bearbeiten</button> <button class="table-action" type="button" data-versions-desktop="${escapeHtml(p.id)}">Versionen</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Desktopprogramme angelegt.</div>';
+  target.querySelectorAll('[data-versions-desktop]').forEach(b=>b.addEventListener('click',()=>openDesktopVersions(b.dataset.versionsDesktop)));
   target.querySelectorAll('[data-edit-desktop]').forEach(b=>b.addEventListener('click',()=>{
     const item=products.find(p=>p.id===b.dataset.editDesktop);if(!item)return;
     const f=document.querySelector('#desktopProductForm');f.reset();
     ['docId','name','sport','licenseProduct','platform','version','releaseStatus','notes'].forEach(k=>{if(f.elements[k])f.elements[k].value=k==='docId'?item.id:(item[k]||'');});
     f.hidden=false;f.scrollIntoView({behavior:'smooth',block:'start'});
   }));
+}
+// V0.9.24.1: getrennte, ausschließlich interne Versionsablage. Keine öffentlichen Download-URLs.
+async function openDesktopVersions(productId){
+  const product=adminData.desktopProducts.find(p=>p.id===productId);if(!product)return;
+  const area=document.querySelector('#desktopVersionArea');area.hidden=false;
+  document.querySelector('#desktopVersionTitle').textContent=`Programmversionen: ${product.name}`;
+  document.querySelector('#desktopVersionForm').elements.productId.value=productId;
+  await renderDesktopVersions(productId);area.scrollIntoView({behavior:'smooth',block:'start'});
+}
+async function renderDesktopVersions(productId){
+  const target=document.querySelector('#desktopVersionList');target.textContent='Versionen werden geladen …';
+  try{
+    const snap=await getDocs(collection(db,'desktopProducts',productId,'versions'));
+    const versions=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    target.innerHTML=versions.length?`<table class="portal-table"><thead><tr><th>Version</th><th>Datei</th><th>Größe</th><th>Status</th><th>Aktion</th></tr></thead><tbody>${versions.map(v=>`<tr><td>${escapeHtml(v.version)}</td><td>${escapeHtml(v.fileName)}</td><td>${(Number(v.size||0)/1048576).toFixed(1)} MB</td><td>${v.status==='blocked'?'Gesperrt':'Entwurf'}</td><td><button class="table-action" type="button" data-block-version="${escapeHtml(v.id)}">${v.status==='blocked'?'Bereits gesperrt':'Sperren'}</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Programmversion hochgeladen.</div>';
+    target.querySelectorAll('[data-block-version]').forEach(b=>b.addEventListener('click',async()=>{
+      const v=versions.find(x=>x.id===b.dataset.blockVersion);if(!v||v.status==='blocked')return;
+      if(!confirm('Diese Version sperren?'))return;
+      try{await updateDoc(doc(db,'desktopProducts',productId,'versions',v.id),{status:'blocked',updatedAt:serverTimestamp()});await renderDesktopVersions(productId);}
+      catch(e){console.error(e);showPortalMessage('Sperren fehlgeschlagen.','error');}
+    }));
+  }catch(e){console.error(e);target.textContent='Versionen konnten nicht geladen werden. Bitte Firestore-Regeln prüfen.';}
+}
+function initDesktopVersionUpload(){
+  const f=document.querySelector('#desktopVersionForm');if(!f)return;
+  document.querySelector('#desktopVersionClose')?.addEventListener('click',()=>{document.querySelector('#desktopVersionArea').hidden=true;f.reset();});
+  f.addEventListener('submit',async event=>{
+    event.preventDefault();const productId=f.elements.productId.value;
+    const product=adminData.desktopProducts.find(p=>p.id===productId);
+    const file=f.elements.programFile.files[0],version=f.elements.version.value.trim();
+    if(!product||!file||!version)return;
+    if(!/\.(zip|exe)$/i.test(file.name)||file.size===0||file.size>500*1024*1024){showPortalMessage('Nur ZIP/EXE bis 500 MB erlaubt.','error');return;}
+    const submit=f.querySelector('[type="submit"]'),progress=document.querySelector('#desktopUploadProgress');submit.disabled=true;
+    const versionDoc=doc(collection(db,'desktopProducts',productId,'versions'));
+    const path=`desktopReleases/${productId}/${versionDoc.id}/program`;
+    try{
+      await new Promise((resolve,reject)=>{
+        const task=uploadBytesResumable(storageRef(desktopStorage,path),file,{contentType:'application/octet-stream',customMetadata:{originalName:file.name}});
+        task.on('state_changed',snap=>{progress.textContent=`Upload: ${Math.round(100*snap.bytesTransferred/snap.totalBytes)} %`;},reject,resolve);
+      });
+      try{await setDoc(versionDoc,{version,fileName:file.name,size:file.size,storagePath:path,status:'draft',notes:f.elements.notes.value.trim(),createdAt:serverTimestamp(),updatedAt:serverTimestamp()});}
+      catch(e){await deleteObject(storageRef(desktopStorage,path)).catch(console.error);throw e;}
+      f.reset();f.elements.productId.value=productId;progress.textContent='Upload abgeschlossen – Version als Entwurf gespeichert.';
+      await renderDesktopVersions(productId);showPortalMessage('Programmversion erfolgreich hochgeladen.');
+    }catch(e){console.error(e);progress.textContent='Upload fehlgeschlagen. Bitte Storage- und Firestore-Regeln prüfen.';showPortalMessage('Programmversion konnte nicht hochgeladen werden.','error');}
+    finally{submit.disabled=false;}
+  });
 }
 function initDesktopProducts(){
   const f=document.querySelector('#desktopProductForm');if(!f)return;
@@ -507,6 +557,7 @@ function initAdminForms(){
   document.querySelector('#exportInvoicesCsv')?.addEventListener('click',exportInvoicesCsv);
   syncUserCustomerRequirement();
   initDesktopProducts();
+  initDesktopVersionUpload();
 }
 
 onAuthStateChanged(auth, async (user) => {
