@@ -152,7 +152,7 @@ async function loadCustomerPortal(user, profile, role) {
     const managerLicense = activeLicenses.find(l => /vereinsmanager\s*web/i.test(String(l.productName||l.product||'')));
     const tournamentLicense = activeLicenses.find(l => /(?:tournament|turniermanager)\s*web/i.test(String(l.productName||l.product||'')));
     const cards = [];
-    if (managerLicense) cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet · Webanwendung</span><h3>Vereinsmanager Web</h3><p>Zentrale Vereinsverwaltung für Mitglieder, Beiträge, Rechnungen und Finanzen.</p></div><div class="product-actions"><a class="btn btn-primary" href="vereinsmanager-web.html">Vereinsmanager starten</a><button class="btn btn-secondary" type="button" data-product-copy="vereinsmanager-web.html">Start-Link kopieren</button><button class="btn btn-secondary" type="button" data-product-shortcut="vereinsmanager-web.html" data-shortcut-name="HOGAsports Vereinsmanager">Desktop-Verknüpfung (Windows)</button></div></article>`);
+    if (managerLicense) cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet · Webanwendung</span><h3>Vereinsmanager Web</h3><p>Zentrale Vereinsverwaltung für Mitglieder, Beiträge, Rechnungen und Finanzen.</p></div><div class="product-actions"><a class="btn btn-primary" href="vereinsmanager-web.html">Vereinsmanager starten</a><button class="btn btn-secondary" type="button" data-product-copy="vereinsmanager-web.html">Start-Link kopieren</button><button class="btn btn-secondary" type="button" data-product-install="vereinsmanager-web.html">Als Web-App installieren</button></div></article>`);
     if (tournamentLicense) cards.push(`<article class="web-product-card"><div><span class="status status-date">In Vorbereitung · Webanwendung</span><h3>Tournament Web</h3><p>Die Lizenz ist Ihrem Kundenkonto zugeordnet. Der direkte Web-Start wird mit der Tournament-Web-Anwendung freigeschaltet.</p></div><button class="btn btn-secondary" type="button" disabled>Noch nicht verfügbar</button></article>`);
     const desktopLicenses = activeLicenses.filter(l => /desktop|basic/i.test(String(l.productName||l.product||'')) && !/vereinsmanager\s*web/i.test(String(l.productName||l.product||'')));
     desktopLicenses.forEach(l => cards.push(`<article class="web-product-card"><div><span class="status status-available">Lizenziert · Desktopprogramm</span><h3>${escapeHtml(l.productName||l.product||'HOGAsports Desktop')}</h3><p>${escapeHtml(l.sport||'')} · Die Downloadverwaltung wird vorbereitet. Hier erscheint künftig die aktuelle, für Sie freigegebene Programmversion.</p></div><button class="btn btn-secondary" type="button" disabled>Download folgt</button></article>`));
@@ -169,13 +169,20 @@ async function loadCustomerPortal(user, profile, role) {
         btn.textContent='Link kopiert ✓'; window.setTimeout(()=>{btn.textContent=label;},2500);
       } catch(e) { window.prompt('Bitte kopieren Sie diesen Start-Link:',url); }
     }));
-    webProductList.querySelectorAll('[data-product-shortcut]').forEach(btn => btn.addEventListener('click', () => {
-      const url = new URL(btn.dataset.productShortcut, window.location.href);
-      if (!['https:','http:'].includes(url.protocol)) return;
-      const name = (btn.dataset.shortcutName||'HOGAsports').replace(/[^a-zA-Z0-9 äöüÄÖÜß_-]/g,'').trim()||'HOGAsports';
-      const blob = new Blob(['[InternetShortcut]\r\nURL='+url.href+'\r\n'],{type:'application/internet-shortcut'});
-      const objectUrl=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=objectUrl; a.download=name+'.url'; document.body.appendChild(a); a.click(); a.remove();
-      window.setTimeout(()=>URL.revokeObjectURL(objectUrl),30000);
+    webProductList.querySelectorAll('[data-product-install]').forEach(btn => btn.addEventListener('click', async () => {
+      if (window.matchMedia('(display-mode: standalone)').matches) {
+        window.alert('Die Web-App ist bereits installiert. Sie können sie über Ihr Startmenü oder den Desktop öffnen.');
+        return;
+      }
+      const promptEvent = window.hogaVmwInstallPrompt;
+      if (promptEvent) {
+        window.hogaVmwInstallPrompt = null;
+        promptEvent.prompt();
+        try { await promptEvent.userChoice; } catch (_) { /* Browser may dismiss prompt */ }
+        return;
+      }
+      window.alert('So installieren Sie den Vereinsmanager als Web-App:\n\nMicrosoft Edge: Öffnen Sie den Vereinsmanager und wählen Sie im Menü (…) „Apps“ → „Diese Website als App installieren“.\n\nGoogle Chrome: Öffnen Sie den Vereinsmanager und wählen Sie im Menü (⋮) „Installieren“ oder „Streamen, speichern und teilen“ → „Seite als App installieren“.\n\nAuf anderen Browsern kann die Installation abweichen oder nicht unterstützt werden.');
+      window.location.href = new URL(btn.dataset.productInstall, window.location.href).href;
     }));
   }
 
