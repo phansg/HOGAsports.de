@@ -150,11 +150,33 @@ async function loadCustomerPortal(user, profile, role) {
   if (webProductList) {
     const activeLicenses = licenses.filter(l => ['active','aktiv'].includes(String(l.status||'').toLowerCase()));
     const managerLicense = activeLicenses.find(l => /vereinsmanager\s*web/i.test(String(l.productName||l.product||'')));
-    const tournamentLicense = activeLicenses.find(l => /tournament\s*web/i.test(String(l.productName||l.product||'')));
+    const tournamentLicense = activeLicenses.find(l => /(?:tournament|turniermanager)\s*web/i.test(String(l.productName||l.product||'')));
     const cards = [];
-    if (managerLicense) cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet</span><h3>Vereinsmanager Web</h3><p>Zentrale Vereinsverwaltung für Mitglieder, Beiträge, Rechnungen und Finanzen. Weitere Web-Module folgen schrittweise.</p></div><a class="btn btn-primary" href="vereinsmanager-web.html">Vereinsmanager starten</a></article>`);
-    if (tournamentLicense) cards.push(`<article class="web-product-card"><div><span class="status status-date">In Vorbereitung</span><h3>Tournament Web</h3><p>Die Lizenz ist Ihrem Kundenkonto zugeordnet. Der direkte Web-Start wird mit der Tournament-Web-Anwendung freigeschaltet.</p></div><button class="btn btn-secondary" type="button" disabled>Noch nicht verfügbar</button></article>`);
-    webProductList.innerHTML = cards.length ? cards.join('') : '<div class="empty-state"><strong>Kein Web-Produkt freigeschaltet.</strong><span>Sobald eine aktive Web-Lizenz hinterlegt ist, erscheint hier der direkte Start.</span></div>';
+    if (managerLicense) cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet · Webanwendung</span><h3>Vereinsmanager Web</h3><p>Zentrale Vereinsverwaltung für Mitglieder, Beiträge, Rechnungen und Finanzen.</p></div><div class="product-actions"><a class="btn btn-primary" href="vereinsmanager-web.html">Vereinsmanager starten</a><button class="btn btn-secondary" type="button" data-product-copy="vereinsmanager-web.html">Start-Link kopieren</button><button class="btn btn-secondary" type="button" data-product-shortcut="vereinsmanager-web.html" data-shortcut-name="HOGAsports Vereinsmanager">Desktop-Verknüpfung (Windows)</button></div></article>`);
+    if (tournamentLicense) cards.push(`<article class="web-product-card"><div><span class="status status-date">In Vorbereitung · Webanwendung</span><h3>Tournament Web</h3><p>Die Lizenz ist Ihrem Kundenkonto zugeordnet. Der direkte Web-Start wird mit der Tournament-Web-Anwendung freigeschaltet.</p></div><button class="btn btn-secondary" type="button" disabled>Noch nicht verfügbar</button></article>`);
+    const desktopLicenses = activeLicenses.filter(l => /desktop|basic/i.test(String(l.productName||l.product||'')) && !/vereinsmanager\s*web/i.test(String(l.productName||l.product||'')));
+    desktopLicenses.forEach(l => cards.push(`<article class="web-product-card"><div><span class="status status-available">Lizenziert · Desktopprogramm</span><h3>${escapeHtml(l.productName||l.product||'HOGAsports Desktop')}</h3><p>${escapeHtml(l.sport||'')} · Die Downloadverwaltung wird vorbereitet. Hier erscheint künftig die aktuelle, für Sie freigegebene Programmversion.</p></div><button class="btn btn-secondary" type="button" disabled>Download folgt</button></article>`));
+    webProductList.innerHTML = cards.length ? cards.join('') : '<div class="empty-state"><strong>Keine aktiven Produkte freigeschaltet.</strong><span>Sobald eine aktive Lizenz hinterlegt ist, erscheinen Ihre Produkte hier.</span></div>';
+    webProductList.querySelectorAll('[data-product-copy]').forEach(btn => btn.addEventListener('click', async () => {
+      const url = new URL(btn.dataset.productCopy, window.location.href).href;
+      const label = btn.textContent;
+      try {
+        if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(url);
+        else {
+          const field = document.createElement('textarea'); field.value=url; field.style.position='fixed'; field.style.opacity='0'; document.body.appendChild(field); field.select();
+          const copied=document.execCommand('copy'); field.remove(); if(!copied) throw new Error('Kopieren nicht möglich');
+        }
+        btn.textContent='Link kopiert ✓'; window.setTimeout(()=>{btn.textContent=label;},2500);
+      } catch(e) { window.prompt('Bitte kopieren Sie diesen Start-Link:',url); }
+    }));
+    webProductList.querySelectorAll('[data-product-shortcut]').forEach(btn => btn.addEventListener('click', () => {
+      const url = new URL(btn.dataset.productShortcut, window.location.href);
+      if (!['https:','http:'].includes(url.protocol)) return;
+      const name = (btn.dataset.shortcutName||'HOGAsports').replace(/[^a-zA-Z0-9 äöüÄÖÜß_-]/g,'').trim()||'HOGAsports';
+      const blob = new Blob(['[InternetShortcut]\r\nURL='+url.href+'\r\n'],{type:'application/internet-shortcut'});
+      const objectUrl=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=objectUrl; a.download=name+'.url'; document.body.appendChild(a); a.click(); a.remove();
+      window.setTimeout(()=>URL.revokeObjectURL(objectUrl),30000);
+    }));
   }
 
   const invoiceList=document.querySelector('#invoiceList');
