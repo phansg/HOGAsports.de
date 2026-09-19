@@ -22,6 +22,8 @@ const sendHogaAccessMail = httpsCallable(functions, 'sendHogaAccessMail');
 const sendHogaOrderConfirmation = httpsCallable(functions, 'sendHogaOrderConfirmation');
 const listLicensedDesktopReleases = httpsCallable(functions, 'listLicensedDesktopReleases');
 const getLicensedDesktopDownload = httpsCallable(functions, 'getLicensedDesktopDownload');
+const deleteHogaLicense = httpsCallable(functions, 'deleteHogaLicense');
+const deleteHogaCustomer = httpsCallable(functions, 'deleteHogaCustomer');
 let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [], catalogProducts: [] };
 let currentUserUid = null;
 // Versionierter, im Quellcode gepflegter Katalog: Neue Web-/Court-Anwendungen hier bei Integration ergänzen.
@@ -176,7 +178,7 @@ async function loadCustomerPortal(user, profile, role) {
     try { releasedDesktop = (await listLicensedDesktopReleases()).data.releases || []; }
     catch(e) { console.error('Desktop-Katalog:',e); if(desktopLicenses.length) cards.push('<article class="web-product-card"><p>Desktop-Downloads sind derzeit nicht abrufbar. Bitte versuchen Sie es später erneut.</p></article>'); }
     releasedDesktop.forEach(p => cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet · Desktopprogramm</span><h3>${escapeHtml(p.name)}</h3><p>${escapeHtml(p.sport)} · ${escapeHtml(p.platform)} · Version ${escapeHtml(p.version)} · ${escapeHtml(p.fileName)}</p></div><button class="btn btn-primary" type="button" data-desktop-download="${escapeHtml(p.productId)}">Programm herunterladen</button></article>`));
-    desktopLicenses.filter(l=>!releasedDesktop.some(p=>p.licenseProduct===l.productName && p.sport===l.sport)).forEach(l=>cards.push(`<article class="web-product-card"><div><span class="status status-date">Lizenziert · Desktopprogramm</span><h3>${escapeHtml(l.productName||l.product||'Desktop Basic')}</h3><p>${escapeHtml(l.sport||'')} · Noch keine Programmversion veröffentlicht.</p></div></article>`));
+    desktopLicenses.filter(l=>!releasedDesktop.some(p=>String(p.productId)===String(l.programId))).forEach(l=>cards.push(`<article class="web-product-card"><div><span class="status status-date">Lizenziert · Desktopprogramm</span><h3>${escapeHtml(l.programName||l.productName||l.product||'Desktop Basic')}</h3><p>${escapeHtml(l.sport||'')} · ${l.programId?'Noch keine Programmversion veröffentlicht.':'Bitte HOGAsports um Zuordnung des konkreten Programms bitten.'}</p></div></article>`));
     webProductList.innerHTML = cards.length ? cards.join('') : '<div class="empty-state"><strong>Keine aktiven Produkte freigeschaltet.</strong><span>Sobald eine aktive Lizenz hinterlegt ist, erscheinen Ihre Produkte hier.</span></div>';
     webProductList.querySelectorAll('[data-desktop-download]').forEach(btn=>btn.addEventListener('click',async()=>{
       const original=btn.textContent;btn.disabled=true;btn.textContent='Berechtigung wird geprüft …';
@@ -223,15 +225,30 @@ function customerName(customerId){ return adminData.customers.find(c=>c.id===cus
 function renderAdminCustomers(){
   const target=document.querySelector('#customerList'); if(!target) return;
   const rows=[...adminData.customers].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Ansprechpartner</th><th>Kontakt</th><th>Typ</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(c=>`<tr><td><span class="admin-customer-name">${escapeHtml(c.name||'–')}</span><span class="admin-subline">${escapeHtml([c.postalCode,c.city].filter(Boolean).join(' ')||'')}</span></td><td>${escapeHtml(c.contactName||'–')}</td><td>${escapeHtml(c.email||'–')}<span class="admin-subline">${escapeHtml(c.phone||'')}</span></td><td>${escapeHtml({club:'Sportverein',organizer:'Turnierveranstalter',facility:'Sportanlage',other:'Sonstiges'}[c.customerType]||c.customerType||'–')}</td><td><span class="status ${c.active===false?'status-dev':'status-available'}">${c.active===false?'Inaktiv':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-customer="${c.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-order-customer="${c.id}">Auftrag</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch kein Kunde vorhanden.</strong><span>Lege den ersten Verein direkt hier an.</span></div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Ansprechpartner</th><th>Kontakt</th><th>Typ</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(c=>`<tr><td><span class="admin-customer-name">${escapeHtml(c.name||'–')}</span><span class="admin-subline">${escapeHtml([c.postalCode,c.city].filter(Boolean).join(' ')||'')}</span></td><td>${escapeHtml(c.contactName||'–')}</td><td>${escapeHtml(c.email||'–')}<span class="admin-subline">${escapeHtml(c.phone||'')}</span></td><td>${escapeHtml({club:'Sportverein',organizer:'Turnierveranstalter',facility:'Sportanlage',other:'Sonstiges'}[c.customerType]||c.customerType||'–')}</td><td><span class="status ${c.active===false?'status-dev':'status-available'}">${c.active===false?'Inaktiv':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-customer="${c.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-order-customer="${c.id}">Auftrag</button><button class="table-action danger" type="button" data-delete-customer="${c.id}">Löschen</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch kein Kunde vorhanden.</strong><span>Lege den ersten Verein direkt hier an.</span></div>';
   target.querySelectorAll('[data-edit-customer]').forEach(btn=>btn.addEventListener('click',()=>fillCustomerForm(btn.dataset.editCustomer)));
   target.querySelectorAll('[data-order-customer]').forEach(btn=>btn.addEventListener('click',()=>openOrderForCustomer(btn.dataset.orderCustomer)));
+  target.querySelectorAll('[data-delete-customer]').forEach(btn=>btn.addEventListener('click',()=>removeCustomer(btn.dataset.deleteCustomer)));
 }
 function renderAdminLicenses(){
   const target=document.querySelector('#adminLicenseList'); if(!target) return;
   const rows=[...adminData.licenses].sort((a,b)=>customerName(a.customerId).localeCompare(customerName(b.customerId),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Produkt</th><th>Sportart</th><th>Lizenz</th><th>Laufzeit</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(l=>`<tr><td>${escapeHtml(customerName(l.customerId))}</td><td>${escapeHtml(l.programName||l.productName||l.product||'–')}<span class="admin-subline">${escapeHtml(l.productName||'')}</span></td><td>${escapeHtml(l.sport||'–')}</td><td>${escapeHtml(l.licenseNumber||'–')}</td><td>${dateText(l.startDate)} – ${dateText(l.endDate)}</td><td><span class="status ${statusClass(l.status)}">${escapeHtml(statusLabel(l.status))}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-license="${l.id}">Bearbeiten</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Lizenz vorhanden.</strong><span>Lege die erste Lizenz für einen Kunden an.</span></div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Produkt</th><th>Sportart</th><th>Lizenz</th><th>Laufzeit</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(l=>`<tr><td>${escapeHtml(customerName(l.customerId))}</td><td>${escapeHtml(l.programName||l.productName||l.product||'–')}<span class="admin-subline">${escapeHtml(l.productName||'')}</span></td><td>${escapeHtml(l.sport||'–')}</td><td>${escapeHtml(l.licenseNumber||'–')}</td><td>${dateText(l.startDate)} – ${dateText(l.endDate)}</td><td><span class="status ${statusClass(l.status)}">${escapeHtml(statusLabel(l.status))}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-license="${l.id}">Bearbeiten</button><button class="table-action danger" type="button" data-delete-license="${l.id}">Löschen</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Lizenz vorhanden.</strong><span>Lege die erste Lizenz für einen Kunden an.</span></div>';
   target.querySelectorAll('[data-edit-license]').forEach(btn=>btn.addEventListener('click',()=>fillLicenseForm(btn.dataset.editLicense)));
+  target.querySelectorAll('[data-delete-license]').forEach(btn=>btn.addEventListener('click',()=>removeLicense(btn.dataset.deleteLicense)));
+}
+async function removeLicense(id){
+  const license=adminData.licenses.find(l=>l.id===id);if(!license)return;
+  const name=license.programName||license.productName||'Lizenz';
+  if(!window.confirm(`Lizenz „${name}“ für ${customerName(license.customerId)} wirklich löschen?\n\nDer Zugriff auf dieses Programm endet unmittelbar. Rechnungen bleiben erhalten.`))return;
+  try{await deleteHogaLicense({licenseId:id});await loadAdminPortal();showPortalMessage('Lizenz gelöscht.');}
+  catch(e){console.error(e);showPortalMessage(e.message||'Lizenz konnte nicht gelöscht werden.','error');}
+}
+async function removeCustomer(id){
+  const customer=adminData.customers.find(c=>c.id===id);if(!customer)return;
+  if(!window.confirm(`Kunden „${customer.name||id}“ löschen?\n\nDie Löschung wird nur durchgeführt, wenn keine verknüpften Benutzer, Lizenzen, Rechnungen, Aufträge oder Vereinsdaten vorhanden sind.`))return;
+  try{await deleteHogaCustomer({customerId:id});await loadAdminPortal();showPortalMessage('Kunde gelöscht.');}
+  catch(e){console.error(e);showPortalMessage(e.message||'Kunde konnte nicht gelöscht werden.','error');}
 }
 function renderAdminUsers(){
   const target=document.querySelector('#adminUserList'); if(!target) return;
