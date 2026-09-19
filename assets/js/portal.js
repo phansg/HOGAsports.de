@@ -18,7 +18,7 @@ const createHogaInvoice = httpsCallable(functions, 'createHogaInvoice');
 const testHogaEmail = httpsCallable(functions, 'testHogaEmail');
 const sendHogaAccessMail = httpsCallable(functions, 'sendHogaAccessMail');
 const sendHogaOrderConfirmation = httpsCallable(functions, 'sendHogaOrderConfirmation');
-let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null };
+let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [] };
 let currentUserUid = null;
 
 function roleAllowed(role) {
@@ -382,9 +382,35 @@ function openOrderForCustomer(id){
 }
 function closeOrderForm(){const f=document.querySelector('#orderConfirmationForm');if(f){f.reset();f.hidden=true;}}
 
+
+// V0.9.24: Produkt- und Versionsmetadaten, bewusst ohne Upload-/Download-Freigabe.
+function renderDesktopProducts(){
+  const target=document.querySelector('#desktopProductList');if(!target)return;
+  const products=adminData.desktopProducts;
+  target.innerHTML=products.length?`<table class="portal-table"><thead><tr><th>Programm</th><th>Sportart</th><th>System</th><th>Version</th><th>Status</th><th>Lizenzbezug</th><th></th></tr></thead><tbody>${products.map(p=>`<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.sport)}</td><td>${escapeHtml(p.platform)}</td><td>${escapeHtml(p.version||'–')}</td><td>${p.releaseStatus==='blocked'?'Gesperrt':'Entwurf'}</td><td>${escapeHtml(p.licenseProduct||'')} · ${escapeHtml(p.sport||'')}</td><td><button class="table-action" type="button" data-edit-desktop="${escapeHtml(p.id)}">Bearbeiten</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Desktopprogramme angelegt.</div>';
+  target.querySelectorAll('[data-edit-desktop]').forEach(b=>b.addEventListener('click',()=>{
+    const item=products.find(p=>p.id===b.dataset.editDesktop);if(!item)return;
+    const f=document.querySelector('#desktopProductForm');f.reset();
+    ['docId','name','sport','licenseProduct','platform','version','releaseStatus','notes'].forEach(k=>{if(f.elements[k])f.elements[k].value=k==='docId'?item.id:(item[k]||'');});
+    f.hidden=false;f.scrollIntoView({behavior:'smooth',block:'start'});
+  }));
+}
+function initDesktopProducts(){
+  const f=document.querySelector('#desktopProductForm');if(!f)return;
+  document.querySelector('#desktopNew')?.addEventListener('click',()=>{f.reset();f.elements.docId.value='';f.hidden=false;f.scrollIntoView({behavior:'smooth',block:'start'});});
+  document.querySelector('#desktopCancel')?.addEventListener('click',()=>{f.reset();f.hidden=true;});
+  f.addEventListener('submit',async e=>{
+    e.preventDefault();const fd=new FormData(f);const id=String(fd.get('docId')||'');
+    const data={name:String(fd.get('name')||'').trim(),sport:String(fd.get('sport')||''),licenseProduct:String(fd.get('licenseProduct')||''),platform:String(fd.get('platform')||''),version:String(fd.get('version')||'').trim(),releaseStatus:String(fd.get('releaseStatus')||'draft'),notes:String(fd.get('notes')||'').trim(),updatedAt:serverTimestamp()};
+    if(!data.name||!data.sport||!data.platform)return;
+    try{if(id)await updateDoc(doc(db,'desktopProducts',id),data);else await addDoc(collection(db,'desktopProducts'),{...data,createdAt:serverTimestamp()});f.reset();f.hidden=true;await loadAdminPortal();showPortalMessage('Desktopprogramm gespeichert (noch nicht veröffentlicht).');}
+    catch(error){console.error(error);showPortalMessage('Desktopprogramm konnte nicht gespeichert werden. Bitte Firestore-Regeln deployen.','error');}
+  });
+}
+
 async function loadAdminPortal(){
-  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, interestsSnap, ordersSnap, settingsSnap]=await Promise.all([
-    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDocs(collection(db,'orders')), getDoc(doc(db,'settings','invoice'))
+  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, interestsSnap, ordersSnap, settingsSnap, desktopSnap]=await Promise.all([
+    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDocs(collection(db,'orders')), getDoc(doc(db,'settings','invoice')), getDocs(collection(db,'desktopProducts'))
   ]);
   adminData.customers=customersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.licenses=licensesSnap.docs.map(d=>({id:d.id,...d.data()}));
@@ -393,6 +419,8 @@ async function loadAdminPortal(){
   adminData.interests=interestsSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.orders=ordersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.invoiceSettings=settingsSnap.exists()?settingsSnap.data():null;
+  adminData.desktopProducts=desktopSnap.docs.map(d=>({id:d.id,...d.data()}));
+  renderDesktopProducts();
   setText('[data-admin-customers]',adminData.customers.length);setText('[data-admin-licenses]',adminData.licenses.length);setText('[data-admin-users]',adminData.users.length);setText('[data-admin-invoices]',adminData.invoices.length);setText('[data-admin-interests]',adminData.interests.filter(i=>!['converted','closed'].includes(String(i.status||'new'))).length);
   renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();renderAdminInterests();renderOrders();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();renderAccounting();
 }
@@ -478,6 +506,7 @@ function initAdminForms(){
   document.querySelector('#exportIncomeCsv')?.addEventListener('click',exportIncomeCsv);
   document.querySelector('#exportInvoicesCsv')?.addEventListener('click',exportInvoicesCsv);
   syncUserCustomerRequirement();
+  initDesktopProducts();
 }
 
 onAuthStateChanged(auth, async (user) => {
