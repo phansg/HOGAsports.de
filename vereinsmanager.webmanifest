@@ -1,0 +1,25 @@
+{
+  "id": "./vereinsmanager-web.html",
+  "name": "HOGAsports Vereinsmanager Web",
+  "short_name": "Vereinsmanager",
+  "description": "HOGAsports Vereinsmanager Web",
+  "start_url": "./vereinsmanager-web.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#a40f19",
+  "icons": [
+    {
+      "src": "assets/img/vereinsmanager-pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/img/vereinsmanager-pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
