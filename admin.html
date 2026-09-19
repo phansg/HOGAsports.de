@@ -105,8 +105,8 @@
 </section>
 
 <section class="portal-panel" data-portal-panel="desktop-products" hidden>
-<div class="panel-head"><div><h2>Desktopprogramme</h2><p>Produktkatalog und Versionsangaben für Nicolas. Upload und Kundendownload sind noch nicht freigeschaltet.</p></div><button class="btn btn-primary btn-small" type="button" id="desktopNew">+ Produkt anlegen</button></div>
-<div class="portal-note compact"><strong>Vorbereitung:</strong> Hier werden noch keine Programmdateien hochgeladen oder Kunden-Downloads freigeschaltet. Die Zuordnung erfolgt über Produkt und Sportart; bestehende Lizenzen bleiben unverändert.</div>
+<div class="panel-head"><div><h2>Desktopprogramme</h2><p>Produktkatalog und getrennte Programmversionen verwalten. Kunden-Downloads sind noch nicht freigeschaltet.</p></div><button class="btn btn-primary btn-small" type="button" id="desktopNew">+ Produkt anlegen</button></div>
+<div class="portal-note compact"><strong>Hinweis:</strong> Dateien sind nur für interne Administratoren zugänglich. Kunden-Downloads und Veröffentlichungen folgen in einer späteren Version.</div>
 <form id="desktopProductForm" class="admin-form" hidden><input type="hidden" name="docId"><div class="form-grid">
 <div class="field"><label>Produktname *</label><input name="name" maxlength="100" required placeholder="z. B. Tennis-Turniermanager"></div>
 <div class="field"><label>Sportart *</label><select name="sport" required><option value="Tennis">Tennis</option><option value="Padel">Padel</option><option value="Pickleball">Pickleball</option><option value="Sportartenübergreifend">Sportartenübergreifend</option><option value="Weitere">Weitere</option></select></div>
@@ -116,7 +116,7 @@
 <div class="field"><label>Versionsstatus</label><select name="releaseStatus"><option value="draft">Entwurf</option><option value="blocked">Gesperrt</option></select></div>
 <div class="field full"><label>Hinweise</label><textarea name="notes" maxlength="500" rows="2" placeholder="Interne Versionshinweise"></textarea></div>
 </div><div class="admin-form-actions"><button class="btn btn-primary btn-small" type="submit">Produkt speichern</button><button class="btn btn-secondary btn-small" type="button" id="desktopCancel">Abbrechen</button></div></form>
-<div id="desktopProductList" class="portal-table-wrap"><div class="empty-state">Produktkatalog wird geladen …</div></div>
+<div id="desktopVersionArea" hidden><h3 id="desktopVersionTitle">Programmversionen</h3><form id="desktopVersionForm" class="admin-form"><input type="hidden" name="productId"><div class="form-grid"><div class="field"><label>Versionsnummer *</label><input name="version" maxlength="32" required placeholder="z. B. 1.8"></div><div class="field"><label>Programmdatei (ZIP oder EXE, maximal 500 MB) *</label><input type="file" name="programFile" accept=".zip,.exe" required></div><div class="field full"><label>Versionshinweise</label><textarea name="notes" maxlength="500" rows="2"></textarea></div></div><div class="admin-form-actions"><button class="btn btn-primary btn-small" type="submit">Version hochladen</button><button class="btn btn-secondary btn-small" type="button" id="desktopVersionClose">Schließen</button></div><p id="desktopUploadProgress" role="status" aria-live="polite"></p></form><div id="desktopVersionList" class="portal-table-wrap"></div></div><div id="desktopProductList" class="portal-table-wrap"><div class="empty-state">Produktkatalog wird geladen …</div></div>
 </section>
 <section class="portal-panel" data-portal-panel="email" hidden>
   <div class="panel-head"><div><h2>E-Mail-Versand</h2><p>Test des zentralen HOGAsports-Systemversands über das STRATO-Postfach service@hogasports.de.</p></div><span class="panel-hint">V0.9.4</span></div>
