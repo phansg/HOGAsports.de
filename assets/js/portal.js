@@ -24,6 +24,7 @@ const listLicensedDesktopReleases = httpsCallable(functions, 'listLicensedDeskto
 const getLicensedDesktopDownload = httpsCallable(functions, 'getLicensedDesktopDownload');
 const deleteHogaLicense = httpsCallable(functions, 'deleteHogaLicense');
 const deleteHogaCustomer = httpsCallable(functions, 'deleteHogaCustomer');
+const updateOwnHogaCustomer = httpsCallable(functions, 'updateOwnHogaCustomer');
 let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [], catalogProducts: [] };
 let currentUserUid = null;
 // Versionierter, im Quellcode gepflegter Katalog: Neue Web-/Court-Anwendungen hier bei Integration ergänzen.
@@ -145,6 +146,7 @@ async function loadCustomerPortal(user, profile, role) {
   const customerSnap = await getDoc(doc(db,'customers',customerId));
   const customer = customerSnap.exists() ? customerSnap.data() : {};
   document.querySelectorAll('[data-customer-name]').forEach(el => el.textContent = customer.name || customer.clubName || 'Ihr Verein');
+  initCustomerSelfData(customer);
 
   const [licenseSnap, memberSnap, invoiceSnap] = await Promise.all([
     getDocs(query(collection(db,'licenses'), where('customerId','==',customerId))),
@@ -219,6 +221,32 @@ async function loadCustomerPortal(user, profile, role) {
   const invoiceList=document.querySelector('#invoiceList');
   invoices.sort((a,b)=>String(b.invoiceDate||'').localeCompare(String(a.invoiceDate||'')));
   if (invoiceList) invoiceList.innerHTML = invoices.length ? `<table class="portal-table"><thead><tr><th>Rechnung</th><th>Datum</th><th>Betrag</th><th>Status</th><th></th></tr></thead><tbody>${invoices.map(i=>`<tr><td>${escapeHtml(i.invoiceNumber||i.id)}</td><td>${dateText(i.invoiceDate)}</td><td>${money(i.totalAmount??i.amount)}</td><td><span class="status ${statusClass(i.paymentStatus||i.status)}">${escapeHtml(i.paymentStatusLabel||i.paymentStatus||i.status||'Offen')}</span></td><td><a class="text-link" href="rechnung.html?id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">Rechnung öffnen</a></td></tr>`).join('')}</tbody></table>` : '<div class="empty-state"><strong>Noch keine Rechnung vorhanden.</strong><span>Rechnungen werden nach einer Buchung hier bereitgestellt.</span></div>';
+}
+
+function initCustomerSelfData(customer) {
+  const form=document.querySelector('#customerSelfForm');
+  if(!form)return;
+  const fields=['name','contactName','email','phone','street','postalCode','city'];
+  const fill=()=>{fields.forEach(key=>{form.elements[key].value=String(customer[key]??'');});
+    document.querySelector('#selfCustomerNumber').value=String(customer.customerNumber||customer.number||'Noch nicht vergeben');
+    document.querySelector('#selfCustomerType').value=({club:'Verein',company:'Unternehmen',facility:'Sportanlage',private:'Privatkunde'})[customer.customerType]||customer.customerType||'–';
+    document.querySelector('#selfDataFeedback').textContent='';};
+  fill();
+  document.querySelector('#selfDataReset').onclick=fill;
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const button=document.querySelector('#selfDataSave'),feedback=document.querySelector('#selfDataFeedback');
+    const data=Object.fromEntries(fields.map(key=>[key,String(form.elements[key].value||'').trim()]));
+    if(!data.name||!data.email){feedback.textContent='Bitte Vereins-/Unternehmensname und Kontakt-E-Mail angeben.';return;}
+    button.disabled=true;feedback.textContent='Ihre Angaben werden gespeichert …';
+    try{
+      const result=await updateOwnHogaCustomer(data);
+      fields.forEach(key=>{customer[key]=result.data[key];});
+      fill();feedback.textContent='Ihre Kundendaten wurden gespeichert.';
+      document.querySelectorAll('[data-customer-name]').forEach(el=>el.textContent=customer.name||'Ihr Verein');
+    }catch(error){console.error('Kundenstammdaten:',error);feedback.textContent=error?.message||'Die Angaben konnten nicht gespeichert werden. Bitte versuchen Sie es erneut.';}
+    finally{button.disabled=false;}
+  };
 }
 
 function customerName(customerId){ return adminData.customers.find(c=>c.id===customerId)?.name || 'Unbekannter Kunde'; }
