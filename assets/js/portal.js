@@ -22,7 +22,7 @@ const sendHogaAccessMail = httpsCallable(functions, 'sendHogaAccessMail');
 const sendHogaOrderConfirmation = httpsCallable(functions, 'sendHogaOrderConfirmation');
 const listLicensedDesktopReleases = httpsCallable(functions, 'listLicensedDesktopReleases');
 const getLicensedDesktopDownload = httpsCallable(functions, 'getLicensedDesktopDownload');
-let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [] };
+let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [], catalogProducts: [] };
 let currentUserUid = null;
 
 function roleAllowed(role) {
@@ -478,9 +478,48 @@ function initDesktopProducts(){
   });
 }
 
+
+// V0.9.25: Interner Web-/Court-Katalog; keine Kundenfreigabe oder Auth-Umgehung.
+function catalogSafeUrl(value){
+  try {const u=new URL(String(value||''));return u.protocol==='https:'?u.href:'';}catch{return '';}
+}
+function renderWebCatalog(){
+  for(const line of ['web','court']){
+    const target=document.getElementById(line+'CatalogList');if(!target)continue;
+    const items=adminData.catalogProducts.filter(p=>p.line===line).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'de'));
+    target.innerHTML=items.length?`<table class="portal-table"><thead><tr><th>Programm</th><th>Sportart</th><th>Version</th><th>Status</th><th>Interner Link</th><th></th></tr></thead><tbody>${items.map(item=>`<tr><td>${escapeHtml(item.name||'')}</td><td>${escapeHtml(item.sport||'')}</td><td>${escapeHtml(item.version||'–')}</td><td>${item.status==='blocked'?'Gesperrt':item.status==='ready'?'Bereit':'Entwurf'}</td><td>${catalogSafeUrl(item.internalUrl)?`<a href="${escapeHtml(catalogSafeUrl(item.internalUrl))}" target="_blank" rel="noopener noreferrer">Öffnen (Anmeldung ggf. nötig)</a>`:'–'}</td><td><button type="button" class="table-action" data-edit-catalog="${escapeHtml(item.id)}">Bearbeiten</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state">Noch keine Programme angelegt. Bereits vorhandene Anwendungen werden nicht automatisch hinzugefügt oder freigeschaltet.</div>';
+    target.querySelectorAll('[data-edit-catalog]').forEach(b=>b.addEventListener('click',()=>openCatalogEditor(line,b.dataset.editCatalog)));
+  }
+}
+function openCatalogEditor(line,id=''){
+  const f=document.getElementById('catalogProductForm');if(!f)return;
+  f.reset();const item=adminData.catalogProducts.find(p=>p.id===id&&p.line===line);
+  f.elements.docId.value=item?.id||'';f.elements.line.value=line;
+  for(const key of ['name','sport','version','internalUrl','notes','status'])if(item&&f.elements[key])f.elements[key].value=item[key]||'';
+  document.getElementById('catalogEditorTitle').textContent=(line==='court'?'HOGAsports Court':'Tournament Web')+' · '+(item?'Programm bearbeiten':'Programm anlegen');
+  activateTab('catalog-editor');
+}
+function initWebCatalog(){
+  document.querySelectorAll('[data-new-catalog]').forEach(b=>b.addEventListener('click',()=>openCatalogEditor(b.dataset.newCatalog)));
+  document.getElementById('catalogCancel')?.addEventListener('click',()=>activateTab(document.getElementById('catalogProductForm').elements.line.value==='court'?'court-products':'web-products'));
+  const f=document.getElementById('catalogProductForm');if(!f)return;
+  f.addEventListener('submit',async event=>{
+    event.preventDefault();const fd=new FormData(f),id=String(fd.get('docId')||''),line=String(fd.get('line')||'');
+    if(!['web','court'].includes(line))return;
+    const rawUrl=String(fd.get('internalUrl')||'').trim(),internalUrl=catalogSafeUrl(rawUrl);
+    if(rawUrl&&!internalUrl){showPortalMessage('Bitte einen gültigen HTTPS-Aufruflink eingeben.','error');return;}
+    const data={line,name:String(fd.get('name')||'').trim(),sport:String(fd.get('sport')||''),version:String(fd.get('version')||'').trim(),internalUrl,notes:String(fd.get('notes')||'').trim(),status:String(fd.get('status')||'draft'),updatedAt:serverTimestamp()};
+    if(!data.name||!data.sport)return;
+    const submit=f.querySelector('[type="submit"]');submit.disabled=true;
+    try{if(id)await updateDoc(doc(db,'productCatalog',id),data);else await addDoc(collection(db,'productCatalog'),{...data,createdAt:serverTimestamp()});await loadAdminPortal();activateTab(line==='court'?'court-products':'web-products');showPortalMessage('Programm im internen Katalog gespeichert. Keine Kundenlizenz wurde angelegt.');}
+    catch(e){console.error(e);showPortalMessage('Programm konnte nicht gespeichert werden. Bitte Firestore-Regeln prüfen.','error');}
+    finally{submit.disabled=false;}
+  });
+}
+
 async function loadAdminPortal(){
-  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, interestsSnap, ordersSnap, settingsSnap, desktopSnap]=await Promise.all([
-    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDocs(collection(db,'orders')), getDoc(doc(db,'settings','invoice')), getDocs(collection(db,'desktopProducts'))
+  const [customersSnap, licensesSnap, usersSnap, invoicesSnap, interestsSnap, ordersSnap, settingsSnap, desktopSnap, catalogSnap]=await Promise.all([
+    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDocs(collection(db,'orders')), getDoc(doc(db,'settings','invoice')), getDocs(collection(db,'desktopProducts')), getDocs(collection(db,'productCatalog'))
   ]);
   adminData.customers=customersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.licenses=licensesSnap.docs.map(d=>({id:d.id,...d.data()}));
@@ -491,6 +530,8 @@ async function loadAdminPortal(){
   adminData.invoiceSettings=settingsSnap.exists()?settingsSnap.data():null;
   adminData.desktopProducts=desktopSnap.docs.map(d=>({id:d.id,...d.data()}));
   renderDesktopProducts();
+  adminData.catalogProducts=catalogSnap.docs.map(d=>({id:d.id,...d.data()}));
+  renderWebCatalog();
   setText('[data-admin-customers]',adminData.customers.length);setText('[data-admin-licenses]',adminData.licenses.length);setText('[data-admin-users]',adminData.users.length);setText('[data-admin-invoices]',adminData.invoices.length);setText('[data-admin-interests]',adminData.interests.filter(i=>!['converted','closed'].includes(String(i.status||'new'))).length);
   renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();renderAdminInterests();renderOrders();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();renderAccounting();
 }
@@ -577,6 +618,7 @@ function initAdminForms(){
   document.querySelector('#exportInvoicesCsv')?.addEventListener('click',exportInvoicesCsv);
   syncUserCustomerRequirement();
   initDesktopProducts();
+  initWebCatalog();
   initDesktopVersionUpload();
 }
 
