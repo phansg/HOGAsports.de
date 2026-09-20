@@ -1,0 +1,9 @@
+import { auth } from './firebase-config.js';
+import { verifyPasswordResetCode, confirmPasswordReset } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+
+const form=document.querySelector('#administrationPasswordForm'),message=document.querySelector('#passwordMessage'),intro=document.querySelector('#passwordIntro'),loginLink=document.querySelector('#administrationLoginLink'),button=document.querySelector('#savePassword');
+const code=new URLSearchParams(location.search).get('oobCode');
+function show(text,error=true){message.textContent=text;message.hidden=false;message.className=`auth-message ${error?'error':'success'}`;}
+async function validate(){if(!code){form.hidden=true;show('Der Zugangslink ist unvollständig. Bitte einen neuen Zugangslink anfordern.');return;}try{await verifyPasswordResetCode(auth,code);}catch(e){console.error(e);form.hidden=true;show('Dieser Zugangslink ist ungültig, abgelaufen oder wurde bereits verwendet. Bitte einen neuen Zugangslink anfordern.');}}
+form.addEventListener('submit',async event=>{event.preventDefault();const password=document.querySelector('#newPassword').value;if(password.length<8){show('Bitte mindestens 8 Zeichen verwenden.');return;}if(password!==document.querySelector('#repeatPassword').value){show('Die Passwörter stimmen nicht überein.');return;}button.disabled=true;try{await confirmPasswordReset(auth,code,password);form.reset();form.hidden=true;intro.hidden=true;loginLink.hidden=false;history.replaceState(null,'',location.pathname);show('Ihr Passwort wurde gespeichert. Sie können sich jetzt in der HOGAsports-Administration anmelden.',false);}catch(e){console.error(e);show(e?.code==='auth/weak-password'?'Das Passwort ist zu schwach. Bitte wählen Sie ein stärkeres Passwort.':'Der Link ist ungültig, abgelaufen oder wurde bereits verwendet. Bitte einen neuen Zugangslink anfordern.');button.disabled=false;}});
+validate();

@@ -3,6 +3,7 @@ import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/
 import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, serverTimestamp, writeBatch } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { getStorage, ref as storageRef, uploadBytesResumable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
+import { hogaAlert } from './hoga-dialog.js';
 
 const pageRole = document.body.dataset.portalRole;
 const auth=pageRole==='customer'?kundenportalFirebase.auth:rootAuth;
@@ -34,6 +35,8 @@ const deleteOwnHogaPortalUser = httpsCallable(functions, 'deleteOwnHogaPortalUse
 const sendOwnHogaPortalAccessMail = httpsCallable(functions, 'sendOwnHogaPortalAccessMail');
 const migrateHogaPortalUser = httpsCallable(functions, 'migrateHogaPortalUser');
 const sendOwnProductAccessMail = httpsCallable(functions, 'sendOwnProductAccessMail');
+const listHogaAdministrationUsers = httpsCallable(functions, 'listHogaAdministrationUsers');
+const listHogaManagedInitialAccesses = httpsCallable(functions, 'listHogaManagedInitialAccesses');
 
 let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [], catalogProducts: [] };
 let currentUserUid = null;
@@ -88,12 +91,7 @@ function statusLabel(status='') {
   return labels[String(status).toLowerCase()] || status || '–';
 }
 function showPortalMessage(text, type='info') {
-  const el=document.querySelector('#portalMessage');
-  if(!el) return;
-  el.textContent=text; el.hidden=false;
-  el.classList.toggle('error', type==='error');
-  clearTimeout(showPortalMessage.timer);
-  showPortalMessage.timer=setTimeout(()=>{el.hidden=true;},5000);
+  return hogaAlert(text,type==='error'?'Fehler':'Hinweis');
 }
 function setText(sel,val){const el=document.querySelector(sel);if(el)el.textContent=val;}
 
@@ -261,7 +259,7 @@ async function loadCustomerPortal(user, profile, role) {
     }));
     webProductList.querySelectorAll('[data-product-install]').forEach(btn => btn.addEventListener('click', async () => {
       if (window.matchMedia('(display-mode: standalone)').matches) {
-        window.alert('Die Web-App ist bereits installiert. Sie können sie über Ihr Startmenü oder den Desktop öffnen.');
+        hogaAlert('Die Web-App ist bereits installiert. Sie können sie über Ihr Startmenü oder den Desktop öffnen.');
         return;
       }
       const promptEvent = window.hogaVmwInstallPrompt;
@@ -271,7 +269,7 @@ async function loadCustomerPortal(user, profile, role) {
         try { await promptEvent.userChoice; } catch (_) { /* Browser may dismiss prompt */ }
         return;
       }
-      window.alert('So installieren Sie den Vereinsmanager als Web-App:\n\nMicrosoft Edge: Öffnen Sie den Vereinsmanager und wählen Sie im Menü (…) „Apps“ → „Diese Website als App installieren“.\n\nGoogle Chrome: Öffnen Sie den Vereinsmanager und wählen Sie im Menü (⋮) „Installieren“ oder „Streamen, speichern und teilen“ → „Seite als App installieren“.\n\nAuf anderen Browsern kann die Installation abweichen oder nicht unterstützt werden.');
+      hogaAlert('So installieren Sie den Vereinsmanager als Web-App:\n\nMicrosoft Edge: Öffnen Sie den Vereinsmanager und wählen Sie im Menü (…) „Apps“ → „Diese Website als App installieren“.\n\nGoogle Chrome: Öffnen Sie den Vereinsmanager und wählen Sie im Menü (⋮) „Installieren“ oder „Streamen, speichern und teilen“ → „Seite als App installieren“.\n\nAuf anderen Browsern kann die Installation abweichen oder nicht unterstützt werden.');
       window.location.href = new URL(btn.dataset.productInstall, window.location.href).href;
     }));
   }
@@ -339,7 +337,7 @@ async function removeCustomer(id){
 function renderAdminUsers(){
   const target=document.querySelector('#adminUserList'); if(!target) return;
   const rows=[...adminData.users].sort((a,b)=>String(a.displayName||a.email||'').localeCompare(String(b.displayName||b.email||''),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>{const key=`${u.authArea}|${u.id}`;return `<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid&&u.authArea==='root'?'<span class="admin-subline">Aktuell angemeldet</span>':''}<span class="admin-subline">${u.authArea==='customerTenant'?'Kundenportal-Mandant':'Bisheriger Auth-Bereich'}</span></td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${key}" ${u.role==='supervisor'?'disabled title="Supervisor-Profil nur manuell verwalten"':''}>Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${key}">Zugangslink</button>${u.authArea==='root'&&['customer_admin','customer'].includes(u.role)?`<button class="table-action secondary" type="button" data-migrate-user="${u.id}">In Kundenportal übernehmen</button>`:''}${isSupervisor()&&u.role!=="supervisor"?`<button class="table-action danger" type="button" data-delete-user="${key}">Zugang löschen</button>`:""}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>{const key=`root|${u.id}`;return `<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid?'<span class="admin-subline">Aktuell angemeldet</span>':''}<span class="admin-subline">Interne HOGAsports-Administration</span></td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'admin').toLowerCase()))}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${key}" ${u.role==='supervisor'?'disabled title="Supervisor-Profil nur manuell verwalten"':''}>Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${key}">Zugangslink</button>${isSupervisor()&&u.role!=="supervisor"?`<button class="table-action danger" type="button" data-delete-user="${key}">Zugang löschen</button>`:""}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">Keine internen Administrationsbenutzer gefunden.</div>';
   target.querySelectorAll('[data-edit-user]').forEach(btn=>btn.addEventListener('click',()=>fillUserForm(btn.dataset.editUser)));
   target.querySelectorAll('[data-reset-user]').forEach(btn=>btn.addEventListener('click',()=>sendResetForUser(btn.dataset.resetUser)));
   target.querySelectorAll('[data-delete-user]').forEach(btn=>btn.addEventListener('click',()=>deleteUserAccess(btn.dataset.deleteUser)));
@@ -356,7 +354,11 @@ function updateLicenseCustomerSelect(){
 function isoDateInput(value){ if(!value) return ''; const d=typeof value.toDate==='function'?value.toDate():new Date(value); return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10); }
 function openForm(id){const f=document.getElementById(id);if(f){f.hidden=false;f.scrollIntoView({behavior:'smooth',block:'nearest'});}}
 function resetForm(id){const f=document.getElementById(id);if(f){f.reset();f.querySelectorAll('input[type="hidden"]').forEach(hidden=>hidden.value='');f.hidden=true;}}
-function fillCustomerForm(id){const c=adminData.customers.find(x=>x.id===id);const f=document.querySelector('#customerForm');if(!c||!f)return;f.elements.docId.value=id;['name','contactName','email','phone','street','postalCode','city','customerType'].forEach(k=>{if(f.elements[k])f.elements[k].value=c[k]??'';});f.elements.active.value=String(c.active!==false);openForm('customerForm');}
+function fillCustomerForm(id){const c=adminData.customers.find(x=>x.id===id);const f=document.querySelector('#customerForm');if(!c||!f)return;f.elements.docId.value=id;['name','contactName','email','phone','street','postalCode','city','customerType'].forEach(k=>{if(f.elements[k])f.elements[k].value=c[k]??'';});f.elements.active.value=String(c.active!==false);openForm('customerForm');loadCustomerAccesses(id);}
+async function loadCustomerAccesses(id){
+  const target=document.querySelector('#customerAccessList');if(!target)return;target.hidden=false;target.innerHTML='<div class="empty-state">Erstzugänge werden geladen …</div>';
+  try{const result=await listHogaManagedInitialAccesses({customerId:id}),rows=result.data.accesses||[];const labels={not_configured:'Noch nicht eingerichtet',configured:'Eingerichtet, Link noch nicht versendet',undocumented:'Versandstatus nicht dokumentiert',sent:'Zugangslink versendet'};target.innerHTML=`<h3>Zugänge</h3><p class="muted-text">Nur von HOGAsports verwaltete Erstzugänge. Kundeneigene Benutzer werden hier nicht geladen.</p><table class="portal-table"><thead><tr><th>Anwendung</th><th>Erstzugang</th><th>Status</th><th>Letzter Linkversand</th><th>Aktivierung</th></tr></thead><tbody>${rows.map(a=>`<tr><td>${escapeHtml(a.application)}</td><td>${escapeHtml(a.email||'–')}</td><td>${escapeHtml(labels[a.status]||a.status)}</td><td>${a.lastSentAt?new Intl.DateTimeFormat('de-DE',{dateStyle:'medium',timeStyle:'short'}).format(new Date(a.lastSentAt)):'–'}</td><td>${a.activated===true?'Passwort eingerichtet':a.activated===false?'Nicht verlässlich festgestellt':'–'}</td></tr>`).join('')}</tbody></table>`;}catch(e){console.error(e);target.innerHTML='<div class="empty-state">Zugangsstatus konnte nicht geladen werden.</div>';}
+}
 function syncLicenseProgramSelect(preferred=''){
   const form=document.getElementById('licenseForm');if(!form)return;
   const line=form.elements.productLine.value,sport=form.elements.sport.value;
@@ -373,16 +375,13 @@ function syncLicenseProgramSelect(preferred=''){
 function fillLicenseForm(id){const l=adminData.licenses.find(x=>x.id===id);const f=document.querySelector('#licenseForm');if(!l||!f)return;f.elements.docId.value=id;['customerId','licenseNumber','status'].forEach(k=>{if(f.elements[k])f.elements[k].value=l[k]??'';});const p=availablePrograms().find(x=>x.id===l.programId);f.elements.productLine.value=p?.line||l.productLine||'';syncLicenseProgramSelect();f.elements.sport.value=p?.sport||l.sport||'';syncLicenseProgramSelect(l.programId||'');f.elements.startDate.value=isoDateInput(l.startDate);f.elements.endDate.value=isoDateInput(l.endDate);openForm('licenseForm');}
 function syncUserCustomerRequirement(){
   const f=document.querySelector('#userForm'); if(!f) return;
-  const isAdmin=['admin','supervisor'].includes(f.elements.role.value);
-  f.elements.customerId.disabled=isAdmin;
-  f.elements.customerId.required=!isAdmin;
-  if(isAdmin) f.elements.customerId.value='';
+  if(f.elements.role)f.elements.role.value='admin';
 }
 function fillUserForm(key){
   const {id,authArea,user:u}=managedUser(key); const f=document.querySelector('#userForm'); if(!u||!f)return;
   let areaInput=f.elements.authArea;if(!areaInput){areaInput=document.createElement('input');areaInput.type='hidden';areaInput.name='authArea';f.append(areaInput);}
   areaInput.value=authArea;
-  f.elements.uid.value=id; f.elements.displayName.value=u.displayName||u.name||''; f.elements.email.value=u.email||''; f.elements.role.value=u.role||'customer'; f.elements.customerId.value=u.customerId||''; f.elements.active.value=String(u.active!==false); f.elements.sendInvite.value='false';
+  f.elements.uid.value=id; f.elements.displayName.value=u.displayName||u.name||''; f.elements.email.value=u.email||''; f.elements.role.value='admin'; f.elements.active.value=String(u.active!==false); f.elements.sendInvite.value='false';
   syncUserCustomerRequirement(); openForm('userForm');
 }
 async function deleteUserAccess(key){
@@ -638,12 +637,12 @@ function renderWebCatalog(){
 function initWebCatalog(){} // Web-/Court-Programme werden ausschließlich im Quellcode registriert.
 
 async function loadAdminPortal(){
-  const [customersSnap, licensesSnap, usersSnap, portalUsersSnap, invoicesSnap, interestsSnap, ordersSnap, settingsSnap, desktopSnap, catalogSnap]=await Promise.all([
-    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), getDocs(collection(db,'users')), getDocs(collection(db,'portalUsers')), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDocs(collection(db,'orders')), getDoc(doc(db,'settings','invoice')), getDocs(collection(db,'desktopProducts')), getDocs(collection(db,'productCatalog'))
+  const [customersSnap, licensesSnap, internalUsersResult, invoicesSnap, interestsSnap, ordersSnap, settingsSnap, desktopSnap, catalogSnap]=await Promise.all([
+    getDocs(collection(db,'customers')), getDocs(collection(db,'licenses')), listHogaAdministrationUsers(), getDocs(collection(db,'invoices')), getDocs(collection(db,'interests')), getDocs(collection(db,'orders')), getDoc(doc(db,'settings','invoice')), getDocs(collection(db,'desktopProducts')), getDocs(collection(db,'productCatalog'))
   ]);
   adminData.customers=customersSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.licenses=licensesSnap.docs.map(d=>({id:d.id,...d.data()}));
-  adminData.users=[...usersSnap.docs.map(d=>({id:d.id,...d.data(),authArea:'root'})),...portalUsersSnap.docs.map(d=>({id:d.id,...d.data(),authArea:'customerTenant'}))];
+  adminData.users=internalUsersResult.data.users||[];
   adminData.invoices=invoicesSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.interests=interestsSnap.docs.map(d=>({id:d.id,...d.data()}));
   adminData.orders=ordersSnap.docs.map(d=>({id:d.id,...d.data()}));
@@ -692,14 +691,13 @@ function initAdminForms(){
   userForm?.elements.role.addEventListener('change',syncUserCustomerRequirement);
   userForm?.addEventListener('submit',async e=>{
     e.preventDefault(); const fd=new FormData(userForm); const uid=String(fd.get('uid')||'');
-    const payload={uid,authArea:String(fd.get('authArea')||''),displayName:String(fd.get('displayName')||'').trim(),email:String(fd.get('email')||'').trim(),role:String(fd.get('role')||''),customerId:String(fd.get('customerId')||''),active:String(fd.get('active'))==='true'};
+    const payload={uid,authArea:'root',displayName:String(fd.get('displayName')||'').trim(),email:String(fd.get('email')||'').trim(),role:'admin',customerId:'',active:String(fd.get('active'))==='true'};
     const wantsInvite=String(fd.get('sendInvite'))==='true';
-    if(!['admin','supervisor'].includes(payload.role)&&!payload.customerId){showPortalMessage('Bitte einen Kunden/Verein auswählen.','error');return;}
     if(wantsInvite&&!payload.active){showPortalMessage('Ein HOGAsports-Zugangslink kann nur für einen aktiven Zugang versendet werden.','error');return;}
     const submit=userForm.querySelector('[type="submit"]'); const oldText=submit?.textContent; if(submit){submit.disabled=true;submit.textContent='Bitte warten …';}
     try{
       let targetUid=uid; if(uid){await updateHogaUser(payload);}else{const created=await createHogaUser(payload);targetUid=created.data.uid;}
-      if(wantsInvite&&targetUid) await sendHogaAccessMail({uid:targetUid,authArea:uid?payload.authArea:(['customer_admin','customer'].includes(payload.role)?'customerTenant':'root')});
+      if(wantsInvite&&targetUid) await sendHogaAccessMail({uid:targetUid,authArea:'root'});
       resetForm('userForm'); await loadAdminPortal();
       showPortalMessage(uid?(wantsInvite?'Benutzer wurde aktualisiert und der HOGAsports-Zugangslink versendet.':'Benutzer wurde aktualisiert.'):(wantsInvite?'Benutzer wurde angelegt und der HOGAsports-Zugangslink versendet.':'Benutzer wurde angelegt.'));
     }catch(err){console.error(err);const msg=err?.message||'';showPortalMessage(msg.includes('already-exists')?'Für diese E-Mail-Adresse besteht bereits ein HOGAsports-Zugang. Bitte verwenden Sie den vorhandenen Benutzer oder löschen Sie diesen zunächst vollständig.':msg.includes('permission-denied')?'Keine Berechtigung für diese Aktion.':msg.includes('not-found')?'Der ausgewählte Datensatz wurde nicht gefunden.':'Benutzer konnte nicht gespeichert werden. Bitte prüfen, ob die Firebase Function bereitgestellt wurde.','error');}
