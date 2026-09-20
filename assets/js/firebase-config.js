@@ -21,6 +21,11 @@ const db = getFirestore(app);
 const HOGA_CUSTOMER_TENANT_ID = 'HOGAsports-Kunden-l44xy';
 // Mit der tatsächlichen Mandanten-ID aus Identity Platform ersetzen.
 const HOGA_VEREINSMANAGER_TENANT_ID = 'Vereinsmanager-Web-lz622';
+// Nach dem Anlegen des Mandanten durch die tatsächliche ID ersetzen.
+const HOGA_MITGLIEDERPORTAL_TENANT_ID = 'Vereinsm-Mitglportal-bahcq';
+// Zentrale Basisadresse für Links und Weiterleitungen der Testumgebung.
+const HOGA_WEB_BASE_URL = 'https://phansg.github.io/HOGAsports.de/';
+const hogaWebUrl = page => new URL(page, HOGA_WEB_BASE_URL).toString();
 
 function isolatedFirebase(name){
   const isolatedApp=getApps().some(a=>a.name===name) ? getApp(name) : initializeApp(firebaseConfig,name);
@@ -31,5 +36,6 @@ const mitgliederportalFirebase=isolatedFirebase('hogasports-mitgliederportal');
 const kundenportalFirebase=isolatedFirebase('hogasports-kundenportal');
 kundenportalFirebase.auth.tenantId=HOGA_CUSTOMER_TENANT_ID;
 vereinsmanagerFirebase.auth.tenantId=HOGA_VEREINSMANAGER_TENANT_ID;
+mitgliederportalFirebase.auth.tenantId=HOGA_MITGLIEDERPORTAL_TENANT_ID;
 
-export { app, auth, db, kundenportalFirebase, vereinsmanagerFirebase, mitgliederportalFirebase, HOGA_CUSTOMER_TENANT_ID, HOGA_VEREINSMANAGER_TENANT_ID };
+export { app, auth, db, kundenportalFirebase, vereinsmanagerFirebase, mitgliederportalFirebase, HOGA_CUSTOMER_TENANT_ID, HOGA_VEREINSMANAGER_TENANT_ID, HOGA_MITGLIEDERPORTAL_TENANT_ID, HOGA_WEB_BASE_URL, hogaWebUrl };
