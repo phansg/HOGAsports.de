@@ -506,12 +506,14 @@ function renderAdminInterests(){
         <a class="btn btn-secondary btn-small" href="mailto:${escapeHtml(i.email||'')}?subject=${encodeURIComponent('HOGAsports – Ihre Anfrage')}">E-Mail schreiben</a>
         <button class="btn btn-secondary btn-small" type="button" data-save-interest-note="${i.id}">Notiz speichern</button>
         ${current==='ordered'?`<button class="btn btn-primary btn-small" type="button" data-convert-interest="${i.id}">Als Kunde übernehmen</button>`:''}
+        ${isSupervisor()?`<button class="btn btn-secondary btn-small" type="button" data-delete-interest="${escapeHtml(i.id)}">Nachricht löschen</button>`:''}
       </div>
     </article>`;
   }).join('');
   el.querySelectorAll('[data-interest-status]').forEach(select=>select.addEventListener('change',()=>updateInterestStatus(select.dataset.interestStatus,select.value)));
   el.querySelectorAll('[data-save-interest-note]').forEach(btn=>btn.addEventListener('click',()=>saveInterestNote(btn.dataset.saveInterestNote)));
   el.querySelectorAll('[data-convert-interest]').forEach(btn=>btn.addEventListener('click',()=>convertInterestToCustomer(btn.dataset.convertInterest)));
+  el.querySelectorAll('[data-delete-interest]').forEach(btn=>btn.addEventListener('click',()=>removeAdminRecord('interests',btn.dataset.deleteInterest,'Eingehende Nachricht')));
 }
 
 function orderPaymentLabel(method='bank'){return String(method)==='paypal'?'PayPal':'Überweisung';}
@@ -653,7 +655,7 @@ async function removeAdminRecord(collectionName,id,label){
   catch(e){console.error(e);showPortalMessage(e.message||'Löschen fehlgeschlagen.','error');}
 }
 function initAdminForms(){
-  document.querySelector('#adminOrdersList')?.addEventListener('click',e=>{const b=e.target.closest('[data-delete-order]');if(b)removeAdminRecord('orders',b.dataset.deleteOrder,'Auftrag');});
+  document.querySelector('#orderList')?.addEventListener('click',e=>{const b=e.target.closest('[data-delete-order]');if(b)removeAdminRecord('orders',b.dataset.deleteOrder,'Auftrag');});
   document.querySelector('#adminInvoiceList')?.addEventListener('click',e=>{const b=e.target.closest('[data-delete-invoice]');if(b)removeAdminRecord('invoices',b.dataset.deleteInvoice,'Rechnung');});
   document.querySelectorAll('[data-toggle-form]').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.dataset.toggleForm;const f=document.getElementById(id);if(f.hidden){f.reset();f.querySelectorAll('input[type="hidden"]').forEach(h=>h.value='');if(id==='userForm')syncUserCustomerRequirement();if(id==='licenseForm')syncLicenseProgramSelect();openForm(id);}else resetForm(id);}));
   document.querySelectorAll('[data-cancel-form]').forEach(btn=>btn.addEventListener('click',()=>resetForm(btn.dataset.cancelForm)));
