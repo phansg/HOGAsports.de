@@ -88,7 +88,7 @@ h1{font-size:clamp(2.6rem,5vw,5rem);line-height:1.02;letter-spacing:-.045em;marg
 @media(max-width:620px){.admin-summary{grid-template-columns:1fr 1fr}.admin-form-actions{flex-direction:column}.admin-form-actions .btn{width:100%}}
 
 /* HOGAsports V0.7 – Benutzer- und Zugangsverwaltung */
-.field-help{display:block;color:var(--muted);font-size:.78rem;margin-top:6px}.admin-form select:disabled{opacity:.58;cursor:not-allowed}.table-action+ .table-action{margin-left:4px}.portal-inline-message.error{background:#fff0f0;border-color:#e5b1b3;color:#7d171c}.admin-form button:disabled{opacity:.65;cursor:wait}
+.field-help{display:block;color:var(--muted);font-size:.78rem;margin-top:6px}.admin-form select:disabled{opacity:.58;cursor:not-allowed}.table-action+ .table-action{margin-left:4px}.portal-inline-message.error{background:#fff0f0;border-color:#e5b1b3;color:#7d171c}.admin-form button:disabled{opacity:.65;cursor:wait}.customer-access-list{margin-top:24px;padding-top:20px;border-top:1px solid var(--line)}.customer-access-list h3{margin:0 0 4px}.customer-access-list .portal-table{margin-top:12px}
 @media(max-width:620px){.portal-table .table-actions{min-width:190px}.table-action{display:inline-block}}
 
 
