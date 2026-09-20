@@ -19,6 +19,8 @@ const db = getFirestore(app);
 // Identity-Platform-Mandant des HOGAsports-Kundenportals. Die Administration
 // und die Produktanwendungen verwenden weiterhin ihre bisherigen Auth-Bereiche.
 const HOGA_CUSTOMER_TENANT_ID = 'HOGAsports-Kunden-l44xy';
+// Mit der tatsächlichen Mandanten-ID aus Identity Platform ersetzen.
+const HOGA_VEREINSMANAGER_TENANT_ID = 'Vereinsmanager-Web-lz622';
 
 function isolatedFirebase(name){
   const isolatedApp=getApps().some(a=>a.name===name) ? getApp(name) : initializeApp(firebaseConfig,name);
@@ -28,5 +30,6 @@ const vereinsmanagerFirebase=isolatedFirebase('hogasports-vereinsmanager');
 const mitgliederportalFirebase=isolatedFirebase('hogasports-mitgliederportal');
 const kundenportalFirebase=isolatedFirebase('hogasports-kundenportal');
 kundenportalFirebase.auth.tenantId=HOGA_CUSTOMER_TENANT_ID;
+vereinsmanagerFirebase.auth.tenantId=HOGA_VEREINSMANAGER_TENANT_ID;
 
-export { app, auth, db, kundenportalFirebase, vereinsmanagerFirebase, mitgliederportalFirebase, HOGA_CUSTOMER_TENANT_ID };
+export { app, auth, db, kundenportalFirebase, vereinsmanagerFirebase, mitgliederportalFirebase, HOGA_CUSTOMER_TENANT_ID, HOGA_VEREINSMANAGER_TENANT_ID };

@@ -33,6 +33,7 @@ const updateOwnHogaPortalUser = httpsCallable(functions, 'updateOwnHogaPortalUse
 const deleteOwnHogaPortalUser = httpsCallable(functions, 'deleteOwnHogaPortalUser');
 const sendOwnHogaPortalAccessMail = httpsCallable(functions, 'sendOwnHogaPortalAccessMail');
 const migrateHogaPortalUser = httpsCallable(functions, 'migrateHogaPortalUser');
+const sendOwnProductAccessMail = httpsCallable(functions, 'sendOwnProductAccessMail');
 
 let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [], catalogProducts: [] };
 let currentUserUid = null;
@@ -223,7 +224,7 @@ async function loadCustomerPortal(user, profile, role) {
     const managerLicense = activeLicenses.find(l => licenseIsCurrent(l) && (l.programId==='vereinsmanager-web' || (!l.programId && /vereinsmanager\s*web/i.test(String(l.productName||l.product||'')))));
     const tournamentLicense = activeLicenses.find(l => /(?:tournament|turniermanager)\s*web/i.test(String(l.productName||l.product||'')));
     const cards = [];
-    if (managerLicense) cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet · Webanwendung</span><h3>Vereinsmanager Web</h3><p>Zentrale Vereinsverwaltung für Mitglieder, Beiträge, Rechnungen und Finanzen.</p></div><div class="product-actions"><a class="btn btn-primary" href="vereinsmanager-web.html">Vereinsmanager starten</a><button class="btn btn-secondary" type="button" data-product-copy="vereinsmanager-web.html">Start-Link kopieren</button><button class="btn btn-secondary" type="button" data-product-install="vereinsmanager-web.html">Als Web-App installieren</button></div></article>`);
+    if (managerLicense) cards.push(`<article class="web-product-card"><div><span class="status status-available">Freigeschaltet · Webanwendung</span><h3>Vereinsmanager Web</h3><p>Zentrale Vereinsverwaltung für Mitglieder, Beiträge, Rechnungen und Finanzen.</p></div><div class="product-actions"><a class="btn btn-primary" href="vereinsmanager-web.html" target="_blank" rel="noopener">Vereinsmanager starten</a><button class="btn btn-secondary" type="button" data-product-copy="vereinsmanager-web.html">Start-Link kopieren</button><button class="btn btn-secondary" type="button" data-product-install="vereinsmanager-web.html">Als Web-App installieren</button>${role==='customer_admin'?'<button class="btn btn-secondary" type="button" data-product-access="vereinsmanager-web">Zugangslink versenden</button>':''}</div></article>`);
     if (tournamentLicense) cards.push(`<article class="web-product-card"><div><span class="status status-date">In Vorbereitung · Webanwendung</span><h3>Tournament Web</h3><p>Die Lizenz ist Ihrem Kundenkonto zugeordnet. Der direkte Web-Start wird mit der Tournament-Web-Anwendung freigeschaltet.</p></div><button class="btn btn-secondary" type="button" disabled>Noch nicht verfügbar</button></article>`);
     const desktopLicenses = activeLicenses.filter(l => /desktop|basic/i.test(String(l.productName||l.product||'')) && !/vereinsmanager\s*web/i.test(String(l.productName||l.product||'')));
     // Die Cloud Function prüft die Lizenz und liefert ausschließlich freigegebene Versionen.
@@ -251,6 +252,12 @@ async function loadCustomerPortal(user, profile, role) {
         }
         btn.textContent='Link kopiert ✓'; window.setTimeout(()=>{btn.textContent=label;},2500);
       } catch(e) { window.prompt('Bitte kopieren Sie diesen Start-Link:',url); }
+    }));
+    webProductList.querySelectorAll('[data-product-access]').forEach(btn=>btn.addEventListener('click',async()=>{
+      const label=btn.textContent;btn.disabled=true;btn.textContent='Wird versendet …';
+      try{await sendOwnProductAccessMail({productId:btn.dataset.productAccess});showPortalMessage('Der persönliche Vereinsmanager-Zugangslink wurde an Ihre E-Mail-Adresse versendet.');}
+      catch(e){console.error(e);showPortalMessage(e?.message||'Der Vereinsmanager-Zugangslink konnte nicht versendet werden.','error');}
+      finally{btn.disabled=false;btn.textContent=label;}
     }));
     webProductList.querySelectorAll('[data-product-install]').forEach(btn => btn.addEventListener('click', async () => {
       if (window.matchMedia('(display-mode: standalone)').matches) {
