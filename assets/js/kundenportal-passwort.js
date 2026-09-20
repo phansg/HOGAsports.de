@@ -5,6 +5,7 @@ const auth = kundenportalFirebase.auth;
 const form = document.querySelector('#customerPasswordForm');
 const message = document.querySelector('#passwordMessage');
 const button = document.querySelector('#savePassword');
+const intro = document.querySelector('#passwordIntro');
 const code = new URLSearchParams(location.search).get('oobCode');
 function show(text, error = true) { message.hidden = false; message.className = `auth-message ${error ? 'error' : 'success'}`; message.textContent = text; }
 async function checkLink() {
@@ -20,7 +21,9 @@ form.addEventListener('submit', async event => {
   button.disabled = true;
   try {
     await confirmPasswordReset(auth, code, password);
+    form.reset();
     form.hidden = true;
+    intro.hidden = true;
     history.replaceState(null, '', location.pathname);
     show('Ihr Passwort wurde gespeichert. Sie können sich jetzt im Kundenportal anmelden.', false);
   } catch (e) {
