@@ -36,6 +36,14 @@ const migrateHogaPortalUser = httpsCallable(functions, 'migrateHogaPortalUser');
 
 let adminData = { customers: [], licenses: [], users: [], invoices: [], interests: [], orders: [], invoiceSettings: null, desktopProducts: [], catalogProducts: [] };
 let currentUserUid = null;
+let currentAdminRole = '';
+const isSupervisor = () => pageRole === 'admin' && currentAdminRole === 'supervisor';
+function confirmSupervisorDelete(label) {
+  if(!isSupervisor())return false;
+  if(!window.confirm(`${label} wirklich löschen?\n\nDieser Vorgang kann nicht rückgängig gemacht werden.`))return false;
+  return window.prompt(`ZWEITE BESTÄTIGUNG: ${label}\nBitte LÖSCHEN eingeben:`)==='LÖSCHEN';
+}
+const deleteHogaAdminRecord = httpsCallable(functions,'deleteHogaAdminRecord');
 let portalMembers=[];
 // Versionierter, im Quellcode gepflegter Katalog: Neue Web-/Court-Anwendungen hier bei Integration ergänzen.
 // Keine automatische Kundenzuweisung; nur tatsächlich integrierte Anwendungen aufführen.
@@ -51,12 +59,12 @@ function licenseIsCurrent(l){const day=new Date().toISOString().slice(0,10);retu
 
 
 function roleAllowed(role) {
-  if (pageRole === 'admin') return role === 'admin';
+  if (pageRole === 'admin') return ['admin','supervisor'].includes(role);
   if (pageRole === 'customer') return ['customer_admin','customer'].includes(role);
   return false;
 }
 function roleLabel(role) {
-  return role === 'admin' ? 'Administrator' : role === 'customer_admin' ? 'Hauptadministrator' : role === 'tournament_manager' ? 'Turnierleiter' : 'Kunde';
+  return role === 'supervisor' ? 'Supervisor' : role === 'admin' ? 'Administrator' : role === 'customer_admin' ? 'Hauptadministrator' : role === 'tournament_manager' ? 'Turnierleiter' : 'Kunde';
 }
 function escapeHtml(value='') { const d=document.createElement('div'); d.textContent=String(value); return d.innerHTML; }
 function dateText(value) {
@@ -296,7 +304,7 @@ function customerName(customerId){ return adminData.customers.find(c=>c.id===cus
 function renderAdminCustomers(){
   const target=document.querySelector('#customerList'); if(!target) return;
   const rows=[...adminData.customers].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Ansprechpartner</th><th>Kontakt</th><th>Typ</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(c=>`<tr><td><span class="admin-customer-name">${escapeHtml(c.name||'–')}</span><span class="admin-subline">${escapeHtml([c.postalCode,c.city].filter(Boolean).join(' ')||'')}</span></td><td>${escapeHtml(c.contactName||'–')}</td><td>${escapeHtml(c.email||'–')}<span class="admin-subline">${escapeHtml(c.phone||'')}</span></td><td>${escapeHtml({club:'Sportverein',organizer:'Turnierveranstalter',facility:'Sportanlage',other:'Sonstiges'}[c.customerType]||c.customerType||'–')}</td><td><span class="status ${c.active===false?'status-dev':'status-available'}">${c.active===false?'Inaktiv':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-customer="${c.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-order-customer="${c.id}">Auftrag</button><button class="table-action danger" type="button" data-delete-customer="${c.id}">Löschen</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch kein Kunde vorhanden.</strong><span>Lege den ersten Verein direkt hier an.</span></div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Ansprechpartner</th><th>Kontakt</th><th>Typ</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(c=>`<tr><td><span class="admin-customer-name">${escapeHtml(c.name||'–')}</span><span class="admin-subline">${escapeHtml([c.postalCode,c.city].filter(Boolean).join(' ')||'')}</span></td><td>${escapeHtml(c.contactName||'–')}</td><td>${escapeHtml(c.email||'–')}<span class="admin-subline">${escapeHtml(c.phone||'')}</span></td><td>${escapeHtml({club:'Sportverein',organizer:'Turnierveranstalter',facility:'Sportanlage',other:'Sonstiges'}[c.customerType]||c.customerType||'–')}</td><td><span class="status ${c.active===false?'status-dev':'status-available'}">${c.active===false?'Inaktiv':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-customer="${c.id}">Bearbeiten</button><button class="table-action secondary" type="button" data-order-customer="${c.id}">Auftrag</button>${isSupervisor()?`<button class="table-action danger" type="button" data-delete-customer="${c.id}">Löschen</button>`:""}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch kein Kunde vorhanden.</strong><span>Lege den ersten Verein direkt hier an.</span></div>';
   target.querySelectorAll('[data-edit-customer]').forEach(btn=>btn.addEventListener('click',()=>fillCustomerForm(btn.dataset.editCustomer)));
   target.querySelectorAll('[data-order-customer]').forEach(btn=>btn.addEventListener('click',()=>openOrderForCustomer(btn.dataset.orderCustomer)));
   target.querySelectorAll('[data-delete-customer]').forEach(btn=>btn.addEventListener('click',()=>removeCustomer(btn.dataset.deleteCustomer)));
@@ -304,27 +312,27 @@ function renderAdminCustomers(){
 function renderAdminLicenses(){
   const target=document.querySelector('#adminLicenseList'); if(!target) return;
   const rows=[...adminData.licenses].sort((a,b)=>customerName(a.customerId).localeCompare(customerName(b.customerId),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Produkt</th><th>Sportart</th><th>Lizenz</th><th>Laufzeit</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(l=>`<tr><td>${escapeHtml(customerName(l.customerId))}</td><td>${escapeHtml(l.programName||l.productName||l.product||'–')}<span class="admin-subline">${escapeHtml(l.productName||'')}</span></td><td>${escapeHtml(l.sport||'–')}</td><td>${escapeHtml(l.licenseNumber||'–')}</td><td>${dateText(l.startDate)} – ${dateText(l.endDate)}</td><td><span class="status ${statusClass(l.status)}">${escapeHtml(statusLabel(l.status))}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-license="${l.id}">Bearbeiten</button><button class="table-action danger" type="button" data-delete-license="${l.id}">Löschen</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Lizenz vorhanden.</strong><span>Lege die erste Lizenz für einen Kunden an.</span></div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Kunde</th><th>Produkt</th><th>Sportart</th><th>Lizenz</th><th>Laufzeit</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(l=>`<tr><td>${escapeHtml(customerName(l.customerId))}</td><td>${escapeHtml(l.programName||l.productName||l.product||'–')}<span class="admin-subline">${escapeHtml(l.productName||'')}</span></td><td>${escapeHtml(l.sport||'–')}</td><td>${escapeHtml(l.licenseNumber||'–')}</td><td>${dateText(l.startDate)} – ${dateText(l.endDate)}</td><td><span class="status ${statusClass(l.status)}">${escapeHtml(statusLabel(l.status))}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-license="${l.id}">Bearbeiten</button>${isSupervisor()?`<button class="table-action danger" type="button" data-delete-license="${l.id}">Löschen</button>`:""}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Lizenz vorhanden.</strong><span>Lege die erste Lizenz für einen Kunden an.</span></div>';
   target.querySelectorAll('[data-edit-license]').forEach(btn=>btn.addEventListener('click',()=>fillLicenseForm(btn.dataset.editLicense)));
   target.querySelectorAll('[data-delete-license]').forEach(btn=>btn.addEventListener('click',()=>removeLicense(btn.dataset.deleteLicense)));
 }
 async function removeLicense(id){
   const license=adminData.licenses.find(l=>l.id===id);if(!license)return;
   const name=license.programName||license.productName||'Lizenz';
-  if(!window.confirm(`Lizenz „${name}“ für ${customerName(license.customerId)} wirklich löschen?\n\nDer Zugriff auf dieses Programm endet unmittelbar. Rechnungen bleiben erhalten.`))return;
+  if(!confirmSupervisorDelete(`Lizenz „${name}“ für ${customerName(license.customerId)}`))return;
   try{await deleteHogaLicense({licenseId:id});await loadAdminPortal();showPortalMessage('Lizenz gelöscht.');}
   catch(e){console.error(e);showPortalMessage(e.message||'Lizenz konnte nicht gelöscht werden.','error');}
 }
 async function removeCustomer(id){
   const customer=adminData.customers.find(c=>c.id===id);if(!customer)return;
-  if(!window.confirm(`Kunden „${customer.name||id}“ löschen?\n\nDie Löschung wird nur durchgeführt, wenn keine verknüpften Benutzer, Lizenzen, Rechnungen, Aufträge oder Vereinsdaten vorhanden sind.`))return;
+  if(!confirmSupervisorDelete(`Kunden „${customer.name||id}“`))return;
   try{await deleteHogaCustomer({customerId:id});await loadAdminPortal();showPortalMessage('Kunde gelöscht.');}
   catch(e){console.error(e);showPortalMessage(e.message||'Kunde konnte nicht gelöscht werden.','error');}
 }
 function renderAdminUsers(){
   const target=document.querySelector('#adminUserList'); if(!target) return;
   const rows=[...adminData.users].sort((a,b)=>String(a.displayName||a.email||'').localeCompare(String(b.displayName||b.email||''),'de'));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>{const key=`${u.authArea}|${u.id}`;return `<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid&&u.authArea==='root'?'<span class="admin-subline">Aktuell angemeldet</span>':''}<span class="admin-subline">${u.authArea==='customerTenant'?'Kundenportal-Mandant':'Bisheriger Auth-Bereich'}</span></td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${key}">Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${key}">Zugangslink</button>${u.authArea==='root'&&['customer_admin','customer'].includes(u.role)?`<button class="table-action secondary" type="button" data-migrate-user="${u.id}">In Kundenportal übernehmen</button>`:''}<button class="table-action danger" type="button" data-delete-user="${key}" ${u.id===currentUserUid&&u.authArea==='root'?'disabled title="Eigener Zugang kann nicht gelöscht werden"':''}>Zugang löschen</button></td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Kunde</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(u=>{const key=`${u.authArea}|${u.id}`;return `<tr><td>${escapeHtml(u.displayName||u.name||'–')}${u.id===currentUserUid&&u.authArea==='root'?'<span class="admin-subline">Aktuell angemeldet</span>':''}<span class="admin-subline">${u.authArea==='customerTenant'?'Kundenportal-Mandant':'Bisheriger Auth-Bereich'}</span></td><td>${escapeHtml(u.email||'–')}</td><td>${escapeHtml(roleLabel(String(u.role||'customer').toLowerCase()))}</td><td>${escapeHtml(u.customerId?customerName(u.customerId):'HOGAsports')}</td><td><span class="status ${u.active===false?'status-dev':'status-available'}">${u.active===false?'Gesperrt':'Aktiv'}</span></td><td class="table-actions"><button class="table-action" type="button" data-edit-user="${key}" ${u.role==='supervisor'?'disabled title="Supervisor-Profil nur manuell verwalten"':''}>Bearbeiten</button><button class="table-action secondary" type="button" data-reset-user="${key}">Zugangslink</button>${u.authArea==='root'&&['customer_admin','customer'].includes(u.role)?`<button class="table-action secondary" type="button" data-migrate-user="${u.id}">In Kundenportal übernehmen</button>`:''}${isSupervisor()&&u.role!=="supervisor"?`<button class="table-action danger" type="button" data-delete-user="${key}">Zugang löschen</button>`:""}</td></tr>`;}).join('')}</tbody></table>`:'<div class="empty-state">Keine Benutzerprofile gefunden.</div>';
   target.querySelectorAll('[data-edit-user]').forEach(btn=>btn.addEventListener('click',()=>fillUserForm(btn.dataset.editUser)));
   target.querySelectorAll('[data-reset-user]').forEach(btn=>btn.addEventListener('click',()=>sendResetForUser(btn.dataset.resetUser)));
   target.querySelectorAll('[data-delete-user]').forEach(btn=>btn.addEventListener('click',()=>deleteUserAccess(btn.dataset.deleteUser)));
@@ -358,7 +366,7 @@ function syncLicenseProgramSelect(preferred=''){
 function fillLicenseForm(id){const l=adminData.licenses.find(x=>x.id===id);const f=document.querySelector('#licenseForm');if(!l||!f)return;f.elements.docId.value=id;['customerId','licenseNumber','status'].forEach(k=>{if(f.elements[k])f.elements[k].value=l[k]??'';});const p=availablePrograms().find(x=>x.id===l.programId);f.elements.productLine.value=p?.line||l.productLine||'';syncLicenseProgramSelect();f.elements.sport.value=p?.sport||l.sport||'';syncLicenseProgramSelect(l.programId||'');f.elements.startDate.value=isoDateInput(l.startDate);f.elements.endDate.value=isoDateInput(l.endDate);openForm('licenseForm');}
 function syncUserCustomerRequirement(){
   const f=document.querySelector('#userForm'); if(!f) return;
-  const isAdmin=f.elements.role.value==='admin';
+  const isAdmin=['admin','supervisor'].includes(f.elements.role.value);
   f.elements.customerId.disabled=isAdmin;
   f.elements.customerId.required=!isAdmin;
   if(isAdmin) f.elements.customerId.value='';
@@ -377,7 +385,7 @@ async function deleteUserAccess(key){
   const sameCustomer=u.customerId?adminData.users.filter(x=>!(x.id===id&&x.authArea===authArea)&&x.authArea===authArea&&x.customerId===u.customerId&&x.active!==false):[];
   const lastHint=u.customerId&&sameCustomer.length===0?'\n\nACHTUNG: Dies ist der letzte aktive Zugang dieses Kunden. Der Kunde kann sich danach nicht mehr im Kundenportal anmelden.':'';
   const ok=window.confirm(`Zugang wirklich vollständig löschen?\n\n${u.displayName||u.email||'Benutzer'} (${u.email||'ohne E-Mail'})\n\nDabei werden der Firebase-Login und das HOGAsports-Benutzerprofil gelöscht.${lastHint}\n\nDiese Aktion kann nicht rückgängig gemacht werden.`);
-  if(!ok)return;
+  if(!ok || !confirmSupervisorDelete(`Zugang ${u.email||id}`))return;
   try{await deleteHogaUser({uid:id,authArea});await loadAdminPortal();showPortalMessage('Der Zugang wurde vollständig gelöscht.');}
   catch(err){console.error(err);const msg=String(err?.message||'');showPortalMessage(msg.includes('failed-precondition')?'Dieser Zugang kann nicht gelöscht werden.':msg.includes('permission-denied')?'Keine Berechtigung zum Löschen des Zugangs.':'Der Zugang konnte nicht vollständig gelöscht werden.','error');}
 }
@@ -399,7 +407,7 @@ function paymentMethodLabel(method='bank'){return ({bank:'Überweisung',paypal:'
 function renderAdminInvoices(){
   const target=document.querySelector('#adminInvoiceList'); if(!target)return;
   const rows=[...adminData.invoices].sort((a,b)=>String(b.invoiceDate||'').localeCompare(String(a.invoiceDate||'')));
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Rechnung</th><th>Kunde</th><th>Datum</th><th>Betrag</th><th>Zahlung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(i=>`<tr><td><strong>${escapeHtml(i.invoiceNumber||i.id)}</strong><span class="admin-subline">${escapeHtml(i.description||'')}</span></td><td>${escapeHtml(customerName(i.customerId))}</td><td>${dateText(i.invoiceDate)}</td><td>${money(i.totalAmount)}</td><td>${escapeHtml(paymentMethodLabel(i.paymentMethod))}</td><td><span class="status ${statusClass(i.paymentStatus)}">${escapeHtml(paymentStatusLabel(i.paymentStatus))}</span>${i.paymentDate?`<span class="admin-subline">${dateText(i.paymentDate)}</span>`:''}</td><td class="table-actions"><a class="table-action" href="rechnung.html?id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">Öffnen</a>${i.paymentStatus!=='paid'?`<button class="table-action secondary" type="button" data-mark-paid="${i.id}">Bezahlt</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Rechnung vorhanden.</strong><span>Erstelle die erste Rechnung direkt aus HOGAsports.</span></div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Rechnung</th><th>Kunde</th><th>Datum</th><th>Betrag</th><th>Zahlung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(i=>`<tr><td><strong>${escapeHtml(i.invoiceNumber||i.id)}</strong><span class="admin-subline">${escapeHtml(i.description||'')}</span></td><td>${escapeHtml(customerName(i.customerId))}</td><td>${dateText(i.invoiceDate)}</td><td>${money(i.totalAmount)}</td><td>${escapeHtml(paymentMethodLabel(i.paymentMethod))}</td><td><span class="status ${statusClass(i.paymentStatus)}">${escapeHtml(paymentStatusLabel(i.paymentStatus))}</span>${i.paymentDate?`<span class="admin-subline">${dateText(i.paymentDate)}</span>`:''}</td><td class="table-actions"><a class="table-action" href="rechnung.html?id=${encodeURIComponent(i.id)}" target="_blank" rel="noopener">Öffnen</a>${i.paymentStatus!=='paid'?`<button class="table-action secondary" type="button" data-mark-paid="${i.id}">Bezahlt</button>`:''}${isSupervisor()?`<button class="table-action danger" type="button" data-delete-invoice="${i.id}">Löschen</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Rechnung vorhanden.</strong><span>Erstelle die erste Rechnung direkt aus HOGAsports.</span></div>';
   target.querySelectorAll('[data-mark-paid]').forEach(btn=>btn.addEventListener('click',()=>markInvoicePaid(btn.dataset.markPaid)));
 }
 function updateInvoiceSelectors(){
@@ -510,7 +518,7 @@ function orderPaymentLabel(method='bank'){return String(method)==='paypal'?'PayP
 function renderOrders(){
   const target=document.querySelector('#orderList');if(!target)return;
   const rows=[...adminData.orders].sort((a,b)=>{const ta=a.confirmedAt?.toMillis?.()||a.createdAt?.toMillis?.()||0,tb=b.confirmedAt?.toMillis?.()||b.createdAt?.toMillis?.()||0;return tb-ta;});
-  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Auftrag</th><th>Kunde</th><th>Leistung</th><th>Preis</th><th>Zahlung</th><th>Bestätigt</th></tr></thead><tbody>${rows.map(o=>`<tr><td><strong>${escapeHtml(o.orderNumber||o.id)}</strong></td><td>${escapeHtml(customerName(o.customerId))}<span class="admin-subline">${escapeHtml(o.recipient||'')}</span></td><td>${escapeHtml(o.productDescription||'–')}</td><td>${money(o.amount||0)}</td><td>${escapeHtml(orderPaymentLabel(o.paymentMethod))}</td><td>${dateText(o.confirmedAt||o.createdAt)}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Auftragsbestätigung versendet.</strong><span>Bestellungen werden erst nach persönlicher Abstimmung hier dokumentiert.</span></div>';
+  target.innerHTML=rows.length?`<table class="portal-table"><thead><tr><th>Auftrag</th><th>Kunde</th><th>Leistung</th><th>Preis</th><th>Zahlung</th><th>Bestätigt</th></tr></thead><tbody>${rows.map(o=>`<tr><td><strong>${escapeHtml(o.orderNumber||o.id)}</strong></td><td>${escapeHtml(customerName(o.customerId))}<span class="admin-subline">${escapeHtml(o.recipient||'')}</span></td><td>${escapeHtml(o.productDescription||'–')}</td><td>${money(o.amount||0)}</td><td>${escapeHtml(orderPaymentLabel(o.paymentMethod))}</td><td>${dateText(o.confirmedAt||o.createdAt)}</td>${isSupervisor()?`<td><button class="table-action danger" data-delete-order="${o.id}">Löschen</button></td>`:"<td></td>"}</tr>`).join('')}</tbody></table>`:'<div class="empty-state"><strong>Noch keine Auftragsbestätigung versendet.</strong><span>Bestellungen werden erst nach persönlicher Abstimmung hier dokumentiert.</span></div>';
 }
 function openOrderForCustomer(id){
   const c=adminData.customers.find(x=>x.id===id);const f=document.querySelector('#orderConfirmationForm');if(!c||!f)return;
@@ -639,7 +647,14 @@ async function loadAdminPortal(){
   renderAdminCustomers();renderAdminLicenses();renderAdminUsers();renderAdminInvoices();renderAdminInterests();renderOrders();updateLicenseCustomerSelect();updateInvoiceSelectors();fillInvoiceSettingsForm();renderAccounting();
 }
 
+async function removeAdminRecord(collectionName,id,label){
+  if(!confirmSupervisorDelete(label))return;
+  try{await deleteHogaAdminRecord({collection:collectionName,id});await loadAdminPortal();showPortalMessage(label+' gelöscht.');}
+  catch(e){console.error(e);showPortalMessage(e.message||'Löschen fehlgeschlagen.','error');}
+}
 function initAdminForms(){
+  document.querySelector('#adminOrdersList')?.addEventListener('click',e=>{const b=e.target.closest('[data-delete-order]');if(b)removeAdminRecord('orders',b.dataset.deleteOrder,'Auftrag');});
+  document.querySelector('#adminInvoiceList')?.addEventListener('click',e=>{const b=e.target.closest('[data-delete-invoice]');if(b)removeAdminRecord('invoices',b.dataset.deleteInvoice,'Rechnung');});
   document.querySelectorAll('[data-toggle-form]').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.dataset.toggleForm;const f=document.getElementById(id);if(f.hidden){f.reset();f.querySelectorAll('input[type="hidden"]').forEach(h=>h.value='');if(id==='userForm')syncUserCustomerRequirement();if(id==='licenseForm')syncLicenseProgramSelect();openForm(id);}else resetForm(id);}));
   document.querySelectorAll('[data-cancel-form]').forEach(btn=>btn.addEventListener('click',()=>resetForm(btn.dataset.cancelForm)));
 
@@ -670,7 +685,7 @@ function initAdminForms(){
     e.preventDefault(); const fd=new FormData(userForm); const uid=String(fd.get('uid')||'');
     const payload={uid,authArea:String(fd.get('authArea')||''),displayName:String(fd.get('displayName')||'').trim(),email:String(fd.get('email')||'').trim(),role:String(fd.get('role')||''),customerId:String(fd.get('customerId')||''),active:String(fd.get('active'))==='true'};
     const wantsInvite=String(fd.get('sendInvite'))==='true';
-    if(payload.role!=='admin'&&!payload.customerId){showPortalMessage('Bitte einen Kunden/Verein auswählen.','error');return;}
+    if(!['admin','supervisor'].includes(payload.role)&&!payload.customerId){showPortalMessage('Bitte einen Kunden/Verein auswählen.','error');return;}
     if(wantsInvite&&!payload.active){showPortalMessage('Ein HOGAsports-Zugangslink kann nur für einen aktiven Zugang versendet werden.','error');return;}
     const submit=userForm.querySelector('[type="submit"]'); const oldText=submit?.textContent; if(submit){submit.disabled=true;submit.textContent='Bitte warten …';}
     try{
@@ -741,7 +756,7 @@ onAuthStateChanged(auth, async (user) => {
     const displayName=data.displayName||data.name||user.email?.split('@')[0]||'Benutzer';
     nameEls.forEach(el=>el.textContent=displayName); emailEls.forEach(el=>el.textContent=user.email||data.email||''); roleEls.forEach(el=>el.textContent=roleLabel(role));
     if(pageRole==='customer'){initPortalUserForm();await loadCustomerPortal(user,data,role);}
-    if(pageRole==='admin'){currentUserUid=user.uid;initAdminForms();await loadAdminPortal();}
+    if(pageRole==='admin'){currentUserUid=user.uid;currentAdminRole=role;initAdminForms();await loadAdminPortal();}
     if(loading) loading.hidden=true; if(content) content.hidden=false;
   } catch(error){ console.error(error); await signOut(auth); window.location.replace(`login.html?app=${pageRole==='customer'?'customer':'admin'}`); }
 });

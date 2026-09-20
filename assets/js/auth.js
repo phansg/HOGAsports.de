@@ -54,7 +54,7 @@ async function routeUser(user) {
   }
 
   const role = String(data.role || '').toLowerCase();
-  if (area==='admin' && role === 'admin') {
+  if (area==='admin' && (role === 'admin' || role === 'supervisor')) {
     window.location.replace('admin.html');
     return;
   }
